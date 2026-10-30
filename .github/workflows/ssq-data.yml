@@ -1,0 +1,150 @@
+# 双色球历史开奖 → data/ssq_history.json —— 号码趋势看板
+#
+# 仓库里只有一个数据文件，页面上所有的推荐、回测、算钱都是浏览器拿这份 JSON 现算的，
+# 所以这条工作流只干一件事：把 3,500 多期历史重新取一遍、有新期号就推上去。
+# 不需要 secret、不需要 cookie、不需要无头浏览器 —— 源是匿名直给的一份纯文本。
+#
+# 数据源：https://data.17500.cn/ssq_asc.txt
+#   一行一期、31 列，2003 年至今。不挑出口 IP：GitHub 机房、Cloudflare 边缘、
+#   家里电脑都是 200（挑它和挑 3D 那份同一个理由）。
+#   没配官方备胎：cwl 那个接口对机房 IP 一律 403（2026-10-30 在 3D 上实测过三轮），
+#   从家里敲它又有被拦掉整个浏览器会话的风险。所以这一条是单源 —— 主源挂了就不写盘、
+#   档案停在原地，宁可旧，不可假。
+#
+# 前置（一次性）：
+#   1. Settings → Pages → Build and deployment → Source = Deploy from a branch，
+#      Branch = main / (root)。站点根就是仓库根，index.html 直接放在根上。
+#   2. Settings → Actions → General → Workflow permissions → Read and write。
+#      下面「要不要跑」那一步要读本工作流的 run 列表，所以 yml 里 permissions
+#      显式写了 actions: read；没写的话那一栏永远是 9999，护栏静默失效。
+#   3. 四个文件按仓库原样放：index.html、fetch_ssq.mjs、data/ssq_history.json、
+#      这个 yml（必须在 .github/workflows/ 下）。
+#
+# 节拍不在这里，在 Cloudflare Worker 的 Settings → Triggers 页上（cron 是 UTC）。
+# 这条挂在他那条「全天每半小时」的闹钟上，一天敲 48 次；48 格里真正去上游取数的
+# 只有开奖日北京 21:25 之后那几格（双色球每周二、四、日 21:15 开奖）。
+# 其余每一轮由「要不要跑」挡在 checkout 之后、抓数据之前，十几秒就结束 ——
+# 不发请求、不改文件、不触发 Pages 重建。
+#
+# ⚠ 下面那个 schedule 只是备份：他账号的 GitHub 定时事件整个是停的
+#   （2026-10-18 用 canary 判完，账号级）。分钟故意错开成 :40 / :10，
+#   跟 Worker 的 :00 / :30 不撞同一分钟 —— 撞了会掉进同一个 concurrency 组。
+
+name: ssq-data
+
+on:
+  schedule:
+    - cron: '40 13 * * *'      # 北京 21:40
+    - cron: '10 14 * * *'      # 北京 22:10
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 勾上＝四道闸都不看，现在就去上游取一次数（用来验这台机器能不能拿到）
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: ssq-data
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      SSQ_OUT: data/ssq_history.json
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # 四道闸，任一道命中就不去碰上游：
+      #   ① 今天不是开奖日（周二 2 / 周四 4 / 周日 7）→ 上游根本不会出新号；
+      #   ② 现在还没到北京 21:25 → 21:15 公布，早去了只能取到上一期；
+      #   ③ 档案里 asof 已经是今天 → 今天的号已经拿到了；
+      #   ④ 距上一条 run 不足 GAP 分钟 → 防手点，手点十次就是十次真请求。
+      # 手点时勾上 force 这四道一起让开 —— 存在的理由只有一个：白天也能发一发真请求，
+      # 用来判「这台 runner 到 17500 通不通」。不勾就是普通手点，照样被挡。
+      # 21:25 这个点是故意留 10 分钟余量的：官方偶尔拖到 21:20 以后。
+      # 取晚了不要紧，后面 22:10 那格自己会补上。
+      - name: 要不要跑
+        id: need
+        env:
+          WF: ssq-data.yml       # API 认的是文件名，不是 name 字段
+          GAP: '20'
+          FORCE: ${{ inputs.force }}
+        run: |
+          today=$(TZ=Asia/Shanghai date +%F)
+          dow=$(TZ=Asia/Shanghai date +%u)          # 1=周一 … 7=周日
+          have=$(node -p "try{JSON.parse(require('fs').readFileSync('$SSQ_OUT','utf8')).asof}catch(e){''}")
+          # 10# 是必需的：date +%H%M 给 0830、0915 这种带零开头的串，
+          # 直接拿去比 -lt 会被 test 当八进制（8 不是八进制数字）而报「不是整数」。
+          hm=$((10#$(TZ=Asia/Shanghai date +%H%M)))
+          disp=$(TZ=Asia/Shanghai date +%H:%M)
+          curl -sS -m 20 -H "Authorization: Bearer $GITHUB_TOKEN" \
+               -H "Accept: application/vnd.github+json" \
+               -o _runs.json \
+               "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/$WF/runs?per_page=10" || :
+          since=$(node -p "try{const j=JSON.parse(require('fs').readFileSync('_runs.json','utf8'));const m=(j.workflow_runs||[]).filter(r=>r.id!==+process.env.GITHUB_RUN_ID).map(r=>(Date.now()-Date.parse(r.created_at))/6e4);m.length?Math.floor(Math.min(...m)):9999}catch(e){9999}")
+          # API 没答话（权限没给、网络抖）就当没有上一条：护栏失效但抓取照跑。
+          # 反过来 fail-closed 的话，一次 curl 抖动能让看板连着几天不出新号。
+          case "$since" in ''|*[!0-9]*) since=9999 ;; esac
+          echo "档案里 asof=$have（今天 $today，周 $dow）· 现在北京 $disp · 距上一条 run $since 分钟（下限 $GAP）"
+          if [ "$FORCE" = "true" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"; echo "手动放行：四道闸这一格都不看，直接去敲一次"
+          elif [ "$dow" != 2 ] && [ "$dow" != 4 ] && [ "$dow" != 7 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"; echo "今天不开奖（只在周二、四、日），这一格不去取数"
+          elif [ "$hm" -lt 2125 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"; echo "还没到 21:25，这一格不去取数"
+          elif [ -n "$have" ] && [ "$have" = "$today" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"; echo "今天的号已经在档案里，收工"
+          elif [ "$since" -lt "$GAP" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"; echo "距上一条不足 $GAP 分钟，这发不重敲"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 源改版、被 429 拦、只回几十条、出球顺序和升序对不上 —— 这几种都在
+      # fetch_ssq.mjs 里 fail 掉且不写盘，所以下一步的「有没有新期号」永远判得准。
+      # 这一格红的时候，页面读的仍是仓库里上一份好档案，不会白屏。
+      - name: 抓取
+        if: steps.need.outputs.skip != 'true'
+        run: node fetch_ssq.mjs
+
+      - name: 提交结果
+        if: steps.need.outputs.skip != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 判据是「内容有没有变」，不是「文件在不在」：ssq_history.json 本来就在仓库里。
+          # 脚本没有新期号时不落盘，所以没变 = 这一轮没新号，空提交一次都别做。
+          # 用 status --porcelain 而不是 diff --quiet：万一这文件还没进过仓库
+          # （先传 yml 后传 json 的那一拍），未跟踪的文件在 diff 里是「没变化」，会被静默吞掉。
+          if ! git status --porcelain -- "$SSQ_OUT" | grep -q .; then
+            echo "::notice::档案没有新期号（多半是上游还没开奖），这一轮不提交"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$SSQ_OUT"
+          git commit -m "双色球开奖档案 $(date -u +%F)"
+          # jjc 那边同一个仓库四条工作流都推 main，实测两发落地只差 1~4 秒，
+          # 10-20 21:31 那次红叉就是 rebase 之后、push 之前那一秒被别人插进去的。
+          # 这里只有这一条推 main，撞车窗口窄，但随机退避不花钱，照抄。
+          n=0
+          while [ "$n" -lt 4 ]; do
+            n=$((n+1))
+            if git pull --rebase origin "$GITHUB_REF_NAME" && git push; then
+              echo "第 $n 次尝试推上去了"; exit 0
+            fi
+            git rebase --abort 2>/dev/null || true
+            sleep $((RANDOM % 6 + 3))
+          done
+          echo "::error::四次都没挤进 main，这一轮不推（下一格接着试）"
+          exit 1
