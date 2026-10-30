@@ -1,0 +1,1653 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="description" content="双色球号码趋势与策略回测：开奖历史热度、遗漏、和值、三区分布、奖池走势，四套可复现的统计策略与随机基线同框回测，算钱按每期真实单注奖金结算">
+<title>双色球 · 号码趋势与策略回测</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+:root{
+  --ink:#05060b; --ink-2:#0a0c15;
+  --glass:rgba(255,255,255,.045); --glass-hi:rgba(255,255,255,.09);
+  --line:rgba(255,255,255,.09);
+  --txt:#f4f6fc; --dim:#adb6cd; --dimmer:#9aa4bd;
+  --gold:#ffc861; --ember:#ff5f43; --ball:#e0271f;
+  --blue:#4f9dff; --ok:#3ddc97; --warn:#ffb020; --bad:#ff5c5c;
+  --r:18px; --shadow:0 18px 50px -18px rgba(0,0,0,.85);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+/* overflow-x 用 clip 不用 hidden：hidden 会把 body 变成滚动容器，粘性导航就不粘了 */
+body{background:var(--ink);color:var(--txt);min-height:100vh;overflow-x:clip;line-height:1.5;
+  font-family:"PingFang SC","Microsoft YaHei","Hiragino Sans GB",system-ui,-apple-system,"Segoe UI",sans-serif}
+.serif{font-family:"Songti SC","STSong","SimSun","Noto Serif SC",serif}
+
+.bg{position:fixed;inset:0;z-index:-2;background:
+  radial-gradient(1100px 620px at 12% -8%,rgba(255,95,67,.22),transparent 62%),
+  radial-gradient(900px 560px at 88% 4%,rgba(255,200,97,.13),transparent 60%),
+  radial-gradient(1000px 700px at 50% 108%,rgba(79,157,255,.12),transparent 65%),
+  linear-gradient(180deg,var(--ink) 0%,var(--ink-2) 60%,var(--ink) 100%)}
+.stars{position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.45}
+.stars i{position:absolute;width:2px;height:2px;border-radius:50%;background:#fff;
+  box-shadow:0 0 6px rgba(255,255,255,.8);animation:tw 4s ease-in-out infinite}
+@keyframes tw{0%,100%{opacity:.12;transform:scale(.6)}50%{opacity:.85;transform:scale(1.25)}}
+
+.wrap{max-width:1320px;margin:0 auto;padding:26px 20px 60px}
+
+/* ---------- 页内锚点导航 ---------- */
+.nav{position:sticky;top:10px;z-index:40;display:flex;flex-wrap:wrap;gap:4px;align-items:center;
+  margin:0 0 20px;padding:6px;border:1px solid var(--line);border-radius:999px;
+  background:rgba(10,12,20,.88);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+.nav a{font-size:.78rem;color:var(--dim);text-decoration:none;padding:7px 13px;border-radius:999px;
+  white-space:nowrap;transition:color .15s,background .15s}
+.nav a:hover{color:var(--txt);background:var(--glass-hi)}
+.nav a.on{color:var(--gold);background:rgba(255,200,97,.14)}
+.nav-t{scroll-margin-top:var(--navh,74px)}
+
+/* ---------- hero ---------- */
+.hero{position:relative;display:flex;gap:28px;align-items:flex-end;flex-wrap:wrap;
+  padding:32px 32px 28px;margin-bottom:24px;border-radius:24px;
+  background:linear-gradient(135deg,rgba(255,95,67,.14),rgba(255,200,97,.06) 45%,rgba(255,255,255,.02));
+  border:1px solid var(--line);box-shadow:var(--shadow);overflow:hidden}
+.hero::after{content:"";position:absolute;left:0;right:0;top:0;height:2px;
+  background:linear-gradient(90deg,transparent,var(--ember),var(--gold),transparent)}
+.hero-kicker{font-size:.78rem;letter-spacing:.3em;color:var(--gold);text-transform:uppercase;margin-bottom:10px}
+h1{font-size:clamp(2rem,5vw,3.2rem);font-weight:800;letter-spacing:.05em;line-height:1.14;
+  background:linear-gradient(120deg,#fff 15%,var(--gold) 55%,var(--ember) 95%);
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.hero-main{flex:1 1 420px;min-width:280px;position:relative;z-index:1}
+.byline{margin-top:14px;font-size:.86rem;color:var(--dim)}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 4px}
+.chip{padding:5px 12px;border-radius:999px;font-size:.8rem;color:#dfe4f2;
+  background:var(--glass);border:1px solid var(--line);backdrop-filter:blur(8px)}
+.chip b{color:var(--gold);font-weight:600}
+.draw-block{flex:0 0 auto;text-align:center;position:relative;z-index:1}
+.balls{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.ball{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;flex:none;
+  font-size:1.7rem;font-weight:900;color:#fff;font-variant-numeric:tabular-nums;
+  background:radial-gradient(circle at 32% 26%,#ff9d80,var(--ball) 60%,#7d0d0a);
+  box-shadow:0 10px 22px -8px rgba(224,39,31,.8),inset 0 -7px 14px rgba(0,0,0,.3)}
+/* 蓝球：和 3D 那套红球同款高光，只换色相，免得看着像另一种玩法 */
+.ball.blue{background:radial-gradient(circle at 32% 26%,#9dd0ff,var(--blue) 60%,#123f6e);
+  box-shadow:0 10px 22px -8px rgba(79,157,255,.75),inset 0 -7px 14px rgba(0,0,0,.3)}
+.draw-block .lab{font-size:.7rem;letter-spacing:.2em;color:var(--dimmer);margin-top:8px}
+.hero-money{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:10px}
+
+/* ---------- 号码球（小） ---------- */
+.pill{display:inline-flex;gap:4px;flex-wrap:wrap;align-items:center;justify-content:center}
+.b2{width:25px;height:25px;border-radius:50%;display:grid;place-items:center;flex:none;
+  font-size:.82rem;font-weight:800;color:#fff;font-variant-numeric:tabular-nums;
+  background:radial-gradient(circle at 34% 28%,#ff9d80,#c92119 62%,#7d0d0a);
+  box-shadow:inset 0 -3px 7px rgba(0,0,0,.3)}
+.b2.g{background:radial-gradient(circle at 34% 28%,#8fd4ff,#2f7fd6 62%,#123f6e)}
+.b2.gold{background:radial-gradient(circle at 34% 28%,#ffe9b8,#ffc861 60%,#e08a1f);color:#2a1a04}
+.b2.ghost{background:rgba(255,255,255,.07);color:var(--dim);box-shadow:none;border:1px solid var(--line)}
+.code{font-variant-numeric:tabular-nums;letter-spacing:.02em}
+
+/* ---------- 区块标题 ---------- */
+.sec-title{display:flex;align-items:center;gap:11px;margin:34px 0 16px;font-size:1.02rem;
+  letter-spacing:.2em;color:var(--dim);font-weight:600}
+.sec-title::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--line),transparent)}
+.sec-title span{color:var(--txt)}
+
+/* ---------- 卡片 ---------- */
+.kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(278px,1fr));gap:16px}
+.card{position:relative;padding:18px 18px 16px;border-radius:var(--r);
+  background:var(--glass);border:1px solid var(--line);backdrop-filter:blur(14px);box-shadow:var(--shadow);
+  overflow:hidden;transition:transform .35s cubic-bezier(.2,.8,.2,1),border-color .35s,background .35s;
+  opacity:0;transform:translateY(16px)}
+.card.in{opacity:1;transform:none}
+.card:hover{transform:translateY(-4px);border-color:rgba(255,255,255,.2);background:var(--glass-hi)}
+.card::before{content:"";position:absolute;top:0;left:0;right:0;height:2px;background:var(--c,var(--gold));opacity:.85}
+.c-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.c-name{font-size:.88rem;color:var(--txt);font-weight:700;letter-spacing:.04em}
+.c-tag{margin-left:auto;font-size:.66rem;letter-spacing:.08em;padding:3px 8px;border-radius:999px;
+  color:var(--c,var(--gold));border:1px solid color-mix(in srgb,var(--c,var(--gold)) 34%,transparent);
+  background:color-mix(in srgb,var(--c,var(--gold)) 12%,transparent);white-space:nowrap}
+.c-rule{font-size:.74rem;color:var(--dimmer);line-height:1.65;margin:10px 0 12px}
+.c-pool{display:flex;flex-direction:column;gap:9px}
+.c-line{display:flex;align-items:flex-start;gap:9px;font-size:.74rem;color:var(--dim)}
+.c-line .lab{flex:none;width:58px;letter-spacing:.04em;color:var(--dimmer);padding-top:3px}
+.c-sub{margin-top:12px;padding-top:11px;border-top:1px dashed rgba(255,255,255,.08);
+  font-size:.75rem;color:var(--dimmer);display:flex;gap:9px;flex-wrap:wrap;align-items:baseline}
+.c-sub b{color:var(--txt);font-weight:700;font-variant-numeric:tabular-nums}
+/* 一注票：6 个红球数字 + 蓝球 + 这注中的奖级。明细表里一列塞五注，只能排数字不能画球。 */
+.tks{display:flex;flex-direction:column;gap:3px}
+.tk{font-size:.64rem;color:var(--dimmer);font-variant-numeric:tabular-nums;letter-spacing:.01em;
+  display:flex;gap:5px;align-items:baseline;white-space:nowrap}
+.tk .tr{color:var(--dim)}
+.tk .tb{color:var(--blue);font-weight:700}
+.tk .tw{margin-left:auto;color:var(--dimmer)}
+.tk .win0{color:var(--gold);font-weight:800}
+.tk .tw.hit{color:#ffb089;font-weight:700}
+/* 国内习惯：红涨绿跌。这里用在盈亏上，亏=绿。 */
+.up{color:#ff9d9d;font-weight:700}
+.down{color:#79f2c0;font-weight:700}
+
+/* ---------- 面板 ---------- */
+.grid2{display:grid;grid-template-columns:1.5fr 1fr;gap:16px}
+/* 格子里的 min-width:auto 会照着里面那张 1,560 宽的明细表把整列顶开，
+   「表格比屏幕宽、左右拖动看全」就变成整页被裁掉一截 —— 必须让它能缩到列宽 */
+.grid2>.panel{min-width:0}
+.grid2 .wide{grid-column:1 / -1}
+@media(max-width:1024px){.grid2{grid-template-columns:1fr}}
+.panel{padding:20px;border-radius:var(--r);background:var(--glass);border:1px solid var(--line);
+  backdrop-filter:blur(14px);box-shadow:var(--shadow)}
+.p-head{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:6px}
+.p-title{font-size:1rem;font-weight:700;letter-spacing:.04em;display:flex;align-items:center;gap:9px}
+.p-title i{width:4px;height:16px;border-radius:2px;background:linear-gradient(180deg,var(--gold),var(--ember))}
+.p-note{font-size:.78rem;color:var(--dimmer)}
+.tabs{display:flex;gap:6px;background:rgba(255,255,255,.05);padding:4px;border-radius:11px;border:1px solid var(--line)}
+.tab{padding:5px 12px;border-radius:8px;font-size:.78rem;color:var(--dim);cursor:pointer;border:none;
+  background:transparent;font-family:inherit;transition:.25s;white-space:nowrap}
+.tab:hover{color:var(--txt)}
+.tab.on{background:linear-gradient(135deg,rgba(255,200,97,.9),rgba(255,150,60,.85));color:#241505;font-weight:700}
+.chart-box{position:relative;height:318px;margin-top:12px}
+.chart-box.short{height:250px}
+.empty{position:absolute;inset:0;display:none;place-items:center;color:var(--dimmer);font-size:.84rem;
+  text-align:center;padding:20px;line-height:1.8}
+.empty.show{display:grid}
+
+/* ---------- 比例条 ---------- */
+.ratio{margin-top:12px}
+.rrow{padding:11px 0;border-bottom:1px dashed rgba(255,255,255,.07)}
+.rrow:last-child{border-bottom:none}
+.rhead{display:flex;justify-content:space-between;align-items:baseline;font-size:.82rem;gap:10px;flex-wrap:wrap}
+.rhead .k{color:var(--dim)}
+.rhead b{font-weight:700;font-variant-numeric:tabular-nums}
+.rhead .exp{font-size:.72rem;color:var(--dimmer);font-variant-numeric:tabular-nums}
+.duo{display:flex;gap:7px;margin-top:6px;align-items:center;font-size:.68rem;color:var(--dimmer)}
+.bar{height:6px;border-radius:99px;background:rgba(255,255,255,.07);overflow:hidden;flex:1}
+.bar>i{display:block;height:100%;border-radius:99px;width:0;transition:width .9s cubic-bezier(.2,.9,.25,1);
+  background:linear-gradient(90deg,var(--c,var(--gold)),color-mix(in srgb,var(--c,var(--gold)) 45%,#fff))}
+
+/* ---------- 表格 ---------- */
+.scroll-x{overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:12px}
+table{width:100%;border-collapse:collapse;font-size:.79rem;min-width:640px}
+th,td{padding:8px 7px;text-align:center;border-bottom:1px dashed rgba(255,255,255,.07);white-space:nowrap}
+th{color:var(--dim);font-weight:600;letter-spacing:.04em}
+td.l,th.l{text-align:left}
+tbody tr:hover{background:rgba(255,255,255,.035)}
+td .b2{display:inline-grid}
+.mk{font-weight:800;font-variant-numeric:tabular-nums}
+.mk.y{color:#ff8d7a}.mk.n{color:var(--dimmer)}
+/* 明细表每格：池（数字，撞上的标金）/ 命中几个 / 这五注各撞到哪一档 */
+.pooln{font-size:.64rem;color:var(--dimmer);font-variant-numeric:tabular-nums;letter-spacing:.02em}
+.pooln b{color:var(--gold);font-weight:800}
+.money{min-width:820px}
+.detail{min-width:1560px}
+.money td.l{font-weight:600}
+.num{font-variant-numeric:tabular-nums}
+
+/* ---------- 说明 / 免责 ---------- */
+.notice{margin-top:16px;padding:14px 16px;border-radius:12px;font-size:.82rem;line-height:1.85;
+  background:rgba(255,176,32,.09);border:1px solid rgba(255,176,32,.28);color:#ffd79a}
+.notice b{color:#ffe9b8}
+.rules{margin-top:12px}
+.rules .rrow{border-bottom:1px dashed rgba(255,255,255,.07);padding:12px 0}
+.rline{display:flex;justify-content:space-between;gap:12px;font-size:.84rem;flex-wrap:wrap}
+.rline .k{color:var(--txt);font-weight:600}
+.rline .v{color:var(--dim);font-variant-numeric:tabular-nums}
+.rline .v b{color:var(--gold)}
+.stamp{text-align:center;font-size:.78rem;color:var(--dimmer);margin-top:14px;font-variant-numeric:tabular-nums}
+.toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:26px 0 4px;justify-content:center}
+.btn{padding:11px 22px;border-radius:999px;border:1px solid rgba(255,200,97,.4);cursor:pointer;
+  font-family:inherit;font-size:.86rem;font-weight:600;letter-spacing:.05em;transition:.3s;color:var(--txt);
+  background:linear-gradient(135deg,rgba(255,95,67,.22),rgba(255,200,97,.15))}
+.btn:hover{transform:translateY(-2px);box-shadow:0 12px 26px -10px rgba(255,140,60,.6);border-color:var(--gold)}
+.btn:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
+/* 逐期明细那一栏的搜索/翻页/导出。次级动作一律保持普通态（描边 + 玻璃底），
+   只有「刷新全部数据」那颗是实心的 —— 满屏金色按钮等于没有主操作。 */
+.dt-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:2px 0 11px}
+.dt-bar .btn{padding:8px 14px;font-size:.78rem;border-radius:10px;font-weight:500;letter-spacing:0;
+  background:var(--glass);border-color:var(--line);color:var(--dim)}
+.dt-bar .btn:hover{transform:none;box-shadow:none;border-color:rgba(255,200,97,.55);color:var(--txt)}
+.inp{background:var(--glass);border:1px solid var(--line);border-radius:10px;color:var(--txt);
+  padding:8px 12px;font-size:.79rem;font-family:inherit;min-width:224px;max-width:100%}
+.inp:focus{outline:none;border-color:rgba(255,200,97,.55)}
+.inp::placeholder{color:var(--dim);opacity:1}
+/* 「每页 N 期」原来是 <select>：展开那层是系统画的，--glass 半透明压到系统白底上
+   就成了浅字压白底（10-30 他在 3D 那页截图里那三条几乎看不见）。改成页内自绘的分段按钮。 */
+.seg{display:inline-flex;align-items:center;gap:2px;background:var(--glass);
+  border:1px solid var(--line);border-radius:10px;padding:2px}
+.seg .sg-lab{font-size:.72rem;color:var(--dim);padding:0 4px 0 8px;white-space:nowrap}
+.seg .sg{appearance:none;border:0;background:transparent;color:var(--dim);font:inherit;
+  font-size:.76rem;padding:6px 10px;border-radius:8px;cursor:pointer;white-space:nowrap}
+.seg .sg:hover{color:var(--txt)}
+.seg .sg.on{background:rgba(255,200,97,.16);color:var(--gold);font-weight:500}
+.dt-info{font-size:.76rem;color:var(--dimmer);max-width:100%}
+.dt-none{text-align:center;color:var(--dimmer);padding:18px 0;font-size:.8rem}
+.spin{display:inline-block;width:13px;height:13px;border:2px solid rgba(255,255,255,.28);
+  border-top-color:var(--gold);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+footer{margin-top:44px;padding-top:22px;border-top:1px solid var(--line);text-align:center;
+  font-size:.77rem;color:var(--dimmer);line-height:2}
+footer b{color:var(--dim);font-weight:600}
+footer a{display:inline-block;color:#1b1204;font-weight:700;text-decoration:none;letter-spacing:.02em;
+  padding:3px 12px;border-radius:999px;background:linear-gradient(135deg,var(--gold),var(--ember));
+  box-shadow:0 3px 14px rgba(255,150,40,.32)}
+footer a:hover{filter:brightness(1.14);transform:translateY(-1px)}
+
+/* ---------- 打赏 ---------- */
+.donate-fab{position:fixed;right:18px;bottom:20px;z-index:60;display:flex;align-items:center;gap:7px;
+  padding:12px 20px;border-radius:999px;text-decoration:none;font-size:.85rem;font-weight:700;letter-spacing:.04em;
+  color:#2a1a04;font-family:inherit;background:linear-gradient(135deg,#ffe9b8,#ffc861 55%,#ff9f43);
+  box-shadow:0 14px 34px -12px rgba(255,170,70,.75),0 0 0 1px rgba(255,220,150,.35) inset;
+  transition:transform .3s,box-shadow .3s;animation:bpulse 2.8s ease-in-out infinite}
+.donate-fab:hover{transform:translateY(-3px) scale(1.04);animation-play-state:paused}
+.donate-fab .df-ico{font-size:1.05rem;line-height:1}
+@keyframes bpulse{0%,100%{box-shadow:0 14px 34px -12px rgba(255,170,70,.75),0 0 0 0 rgba(255,200,97,.5)}
+  55%{box-shadow:0 14px 34px -12px rgba(255,170,70,.75),0 0 0 14px rgba(255,200,97,0)}}
+.modal{position:fixed;inset:0;z-index:80;display:none;align-items:center;justify-content:center;padding:22px;
+  background:rgba(3,4,9,.78);backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px)}
+.modal.open{display:flex;animation:fadein .25s ease}
+@keyframes fadein{from{opacity:0}to{opacity:1}}
+.modal-card{position:relative;max-width:420px;width:100%;padding:26px 24px;border-radius:20px;text-align:center;
+  background:linear-gradient(160deg,#151b2e,#0d1120);border:1px solid rgba(255,200,97,.3);
+  box-shadow:0 30px 70px -20px rgba(0,0,0,.85);max-height:88vh;overflow:auto}
+.modal-title{font-size:1.15rem;font-weight:800;color:var(--gold);letter-spacing:.06em}
+.modal-img{display:block;width:100%;max-width:230px;margin:14px auto 4px;border-radius:14px;background:#fff;
+  box-shadow:0 8px 24px -10px rgba(0,0,0,.7)}
+.modal-cap{font-size:.72rem;color:var(--dimmer);margin-top:2px}
+.modal-tip{font-size:.76rem;color:var(--dim);line-height:1.7;margin:12px 0 4px}
+.modal-x{position:absolute;top:10px;right:14px;width:28px;height:28px;border:none;border-radius:50%;
+  background:rgba(255,255,255,.07);color:var(--dim);font-size:1rem;cursor:pointer;line-height:1}
+.modal-x:hover{background:rgba(255,95,67,.28);color:#fff}
+
+@media(max-width:640px){
+  .wrap{padding:16px 12px 40px}
+  .hero{padding:20px 16px;gap:16px;align-items:flex-start;border-radius:20px}
+  h1{font-size:clamp(1.6rem,7.6vw,2.2rem);letter-spacing:.03em}
+  .hero-kicker{font-size:.66rem;letter-spacing:.2em}
+  .ball{width:38px;height:38px;font-size:1.25rem}
+  .balls{gap:5px}
+  .draw-block{margin:0 auto}
+  .chips{gap:6px;margin:12px 0 2px}
+  .chip{font-size:.72rem;padding:4px 9px}
+  .byline{font-size:.78rem;margin-top:10px}
+  .kpi{grid-template-columns:1fr;gap:12px}
+  .c-name{font-size:.84rem}
+  .panel{padding:16px 14px}
+  .p-title{font-size:.95rem}
+  .chart-box{height:238px}.chart-box.short{height:206px}
+  .tab{padding:4px 10px;font-size:.74rem}
+  .sec-title{font-size:.9rem;margin:26px 0 14px}
+  .btn{font-size:.82rem;padding:9px 16px}
+  footer{font-size:.72rem;padding-bottom:62px}
+  .donate-fab{right:12px;bottom:12px;padding:10px 15px;font-size:.78rem}
+  .modal-card{padding:22px 16px}
+  .modal-img{max-width:200px}
+}
+</style>
+</head>
+<body>
+<div class="bg"></div>
+<div class="stars" id="stars"></div>
+
+<div class="wrap">
+
+  <section class="hero">
+    <div class="hero-main">
+      <div class="hero-kicker">CHINA WELFARE LOTTERY · SSQ</div>
+      <h1>双色球<br>号码趋势与策略回测</h1>
+      <div class="chips">
+        <div class="chip">档案 <b id="hpCount">—</b> 期 · 自 <span id="hpFirst">—</span></div>
+        <div class="chip">最后一期 <b id="hpLastCode">—</b></div>
+        <div class="chip">下一期 <b id="hpNextCode">—</b> · <span id="cdText">—</span></div>
+      </div>
+      <div class="byline" id="hpState">正在读取开奖档案…</div>
+    </div>
+    <div class="draw-block">
+      <div class="balls" id="heroBalls">
+        <div class="ball">-</div><div class="ball">-</div><div class="ball">-</div>
+        <div class="ball">-</div><div class="ball">-</div><div class="ball">-</div>
+        <div class="ball blue">-</div>
+      </div>
+      <div class="lab" id="heroDate">—</div>
+      <div class="hero-money">
+        <div class="chip">当期销量 <b id="heroSales">—</b></div>
+        <div class="chip">一等奖奖池 <b id="heroPool">—</b></div>
+      </div>
+      <div class="chip" style="margin-top:8px" id="heroFy">福运奖 —</div>
+    </div>
+  </section>
+
+  <nav class="nav" id="topnav" aria-label="页内导航">
+    <a href="#sec-pick">本期推荐</a><a href="#sec-trend">数据趋势</a><a href="#sec-bt">策略回测</a><a href="#sec-detail">逐期明细</a><a href="#sec-prize">奖金规则</a>
+  </nav>
+
+  <div class="sec-title nav-t" id="sec-pick"><span>本期推荐</span> 四套统计策略 + 一条随机基线</div>
+  <div class="kpi" id="planGrid"></div>
+  <div class="notice">
+    每个格子里的号码都是<b>用同一份开奖历史现算出来的</b>，口径写在卡片上，你自己在下面「策略回测」里可以逐期核对。
+    右边那张<b>随机基线</b>不是装饰：它拿同一把尺子量，把每期该中的概率算给你看。
+    <span id="planFlag">四套策略谁也没跑赢它的话，页面就直接写「没跑赢」——开奖机没有记忆，号码之间彼此独立，这是这类游戏的定义。</span>
+    <b>每套押 5 注</b>：10 码红池先按近 30 期出现次数从热到冷排，第 t 注取第 2t 位起的连续 6 个号（首尾相接），
+    步长就是 10÷5=2，于是每个号正好出现在 3 注里 —— 谁都不霸屏，五注绝不重样；蓝球按热度进同一只轮子，4 码配 5 注、最热那个多拿一注。
+    这 10 码真要买全复式是 <b>210 注 · 420 元</b>，五注只是从里面取 5 注，别把「池子覆盖了」读成「买下了」。
+    两套算出同一批号码的，卡片上会明写「撞上了」，不装成两套结果。
+  </div>
+
+  <div class="sec-title nav-t" id="sec-trend"><span>数据趋势</span></div>
+  <div class="grid2">
+    <div class="panel">
+      <div class="p-head">
+        <div class="p-title"><i></i>红球出现次数</div>
+        <div class="tabs" id="heatTabs">
+          <button class="tab" data-w="30">近 30 期</button>
+          <button class="tab" data-w="100">近 100 期</button>
+          <button class="tab" data-w="365">近一年</button>
+          <button class="tab on" data-w="0">全部</button>
+        </div>
+      </div>
+      <div class="p-note" id="heatNote">—</div>
+      <div class="chart-box"><canvas id="cHeat"></canvas><div class="empty" id="eHeat"></div></div>
+    </div>
+    <div class="panel">
+      <div class="p-head"><div class="p-title"><i></i>当前遗漏 / 历史最长遗漏</div></div>
+      <div class="p-note" id="missNote">遗漏 = 距今隔了多少期没开出来；上期刚开出记 0 期</div>
+      <div class="chart-box"><canvas id="cMiss"></canvas><div class="empty" id="eMiss"></div></div>
+    </div>
+    <div class="panel wide">
+      <div class="p-head">
+        <div class="p-title"><i></i>和值 · 销量 · 奖池</div>
+        <div class="tabs" id="mixTabs">
+          <button class="tab on" data-v="sum">和值走势</button>
+          <button class="tab" data-v="hist">和值分布</button>
+          <button class="tab" data-v="sales">销量走势</button>
+          <button class="tab" data-v="pool">奖池走势</button>
+        </div>
+      </div>
+      <div class="p-note" id="mixNote">—</div>
+      <div class="chart-box"><canvas id="cMix"></canvas><div class="empty" id="eMix"></div></div>
+    </div>
+    <div class="panel">
+      <div class="p-head"><div class="p-title"><i></i>和上一期撞了几个号</div></div>
+      <div class="p-note" id="repeatNote">如果每期真独立，重号个数应服从超几何分布 —— 这条是「记忆」最直接的检验</div>
+      <div class="chart-box short"><canvas id="cRepeat"></canvas><div class="empty" id="eRepeat"></div></div>
+    </div>
+    <div class="panel">
+      <div class="p-head"><div class="p-title"><i></i>奇偶 · 大小 · 三区</div></div>
+      <div class="p-note" id="ratioNote">—</div>
+      <div class="ratio" id="ratioBox"></div>
+    </div>
+  </div>
+
+  <div class="sec-title nav-t" id="sec-bt"><span>策略回测</span> 每期只用它之前开过的号码算</div>
+  <div class="grid2">
+    <div class="panel">
+      <div class="p-head">
+        <div class="p-title"><i></i>红球池平均命中个数</div>
+        <div class="tabs" id="btTabs">
+          <button class="tab" data-n="100">近 100 期</button>
+          <button class="tab" data-n="365">近一年</button>
+          <button class="tab" data-n="1000">近三年</button>
+          <button class="tab on" data-n="0">全部</button>
+        </div>
+      </div>
+      <div class="p-note" id="btNote">—</div>
+      <div class="chart-box"><canvas id="cBt"></canvas><div class="empty" id="eBt"></div></div>
+    </div>
+    <div class="panel">
+      <div class="p-head"><div class="p-title"><i></i>蓝球池命中率</div></div>
+      <div class="p-note" id="btBlueNote">—</div>
+      <div class="chart-box"><canvas id="cBtBlue"></canvas><div class="empty" id="eBtBlue"></div></div>
+    </div>
+    <div class="panel wide">
+      <div class="p-head"><div class="p-title"><i></i>近 300 期滚动命中</div></div>
+      <div class="p-note">每 100 期算一格，横轴是期号 · 虚线是随机基线应有的平均命中个数</div>
+      <div class="chart-box"><canvas id="cBtLine"></canvas><div class="empty" id="eBtLine"></div></div>
+    </div>
+    <div class="panel wide">
+      <div class="p-head"><div class="p-title"><i></i>回测算钱：每期每套只买这 5 注</div></div>
+      <div class="p-note" id="btMoneyNote">—</div>
+      <div class="scroll-x"><table class="money"><thead><tr>
+        <th class="l">策略</th><th>回测期数</th><th>押注</th><th>中过奖的注</th><th>中奖率</th>
+        <th>最高档</th><th>投入</th><th>返奖</th><th>净盈亏</th><th>返还率</th>
+      </tr></thead><tbody id="btMoney"></tbody></table></div>
+    </div>
+    <div class="panel wide nav-t" id="sec-detail">
+      <div class="p-head"><div class="p-title"><i></i>逐期明细</div></div>
+      <div class="p-note">每格三行：第一行是这套策略的 10 码红池（金色 = 这期真开出来了），第二行是「池里撞进几个红球、蓝球中没中」，
+        下面五行是它在<b>开奖之前</b>押的 5 注，每注末尾标它撞到了哪一档、当期实际单注多少钱 · 最后一列汇总哪套押到了 200 元及以上
+        · 默认最近 10 期，输期号（如 2026124）或号码（如 0311）只列匹配的行 · 表格比屏幕宽，左右拖动看全</div>
+      <div class="dt-bar">
+        <input class="inp" id="dtQ" type="search" placeholder="搜期号或号码，如 2026124 或 0311" autocomplete="off" aria-label="搜期号或号码">
+        <span class="seg" id="dtSize" role="group" aria-label="每页期数">
+          <span class="sg-lab">每页</span>
+          <button class="sg on" data-n="10" type="button">10 期</button>
+          <button class="sg" data-n="20" type="button">20 期</button>
+          <button class="sg" data-n="50" type="button">50 期</button>
+          <button class="sg" data-n="100" type="button">100 期</button>
+        </span>
+        <button class="btn" id="dtPrev">上一页</button>
+        <span class="dt-info" id="dtInfo">—</span>
+        <button class="btn" id="dtNext">下一页</button>
+        <button class="btn" id="dtCsv">导出全部 CSV</button>
+      </div>
+      <div class="scroll-x"><table class="detail"><thead><tr id="btHead"></tr></thead><tbody id="btBody"></tbody></table></div>
+    </div>
+  </div>
+
+  <div class="sec-title nav-t" id="sec-prize"><span>奖金规则与返还率</span></div>
+  <div class="grid2">
+    <div class="panel wide">
+      <div class="p-head"><div class="p-title"><i></i>七个奖级</div></div>
+      <div class="p-note">单注 2 元 · 每周三期（周二、周四、周日 21:15 前后公布）· 概率按 C(33,6)×16 = 17,721,088 注全集算</div>
+      <div class="rules" id="prizeBox"></div>
+    </div>
+    <div class="panel">
+      <div class="p-head"><div class="p-title"><i></i>这 2 元实际回来了多少</div></div>
+      <div class="p-note">下面这一行不是规则里抄的，是拿档案里每期的销售额和实际派奖除出来的</div>
+      <div class="rules" id="fundBox"></div>
+    </div>
+    <div class="panel">
+      <div class="p-head"><div class="p-title"><i></i>2026-02-01 那次改规则</div></div>
+      <div class="p-note">档案里改得过来的痕迹，都能逐期核对</div>
+      <div class="rules" id="ruleBox"></div>
+    </div>
+  </div>
+
+  <div class="notice">
+    <b>理性购彩。</b>本页把所有能算的都摆在你眼前，包括最不好看的那一行：档案里每期真实单注奖金加起来，
+    官方每收 2 元约退回 <b id="nuReal">—</b>；但你按任何一种买法自己下 5 注，期望只拿回约 24%——
+    因为退回的钱里有一多半走的是<b>一二等奖</b>，而那两档的概率是 1/17,721,088 和 15/17,721,088。
+    任何号码策略都不改变这个数——策略只能决定你<b>这一注长什么样</b>，不能决定它中的概率。
+    谁要是跟你说「内部号码」「必中公式」，那是诈骗，不是分析。购彩未满 18 周岁不得购买。
+  </div>
+
+  <div class="toolbar">
+    <button class="btn" id="refreshBtn">重新读取开奖档案</button>
+  </div>
+  <div class="stamp" id="stamp">尚未加载</div>
+
+  <footer>
+    <div>开奖数据：中国福利彩票官网 · 指标口径以官方游戏规则为准</div>
+    <div>© 2026 九处 · 双色球 号码趋势与策略回测 · <a id="donateLink" href="#" target="_blank" rel="noopener">请作者喝杯咖啡 ☕</a></div>
+  </footer>
+</div>
+
+<a class="donate-fab" id="donateBtn" href="#" target="_blank" rel="noopener">
+  <span class="df-ico">🧧</span><span>打赏作者</span>
+</a>
+
+<div class="modal" id="donateModal">
+  <div class="modal-card">
+    <button class="modal-x" id="donateClose" aria-label="关闭">×</button>
+    <div class="modal-title serif">感谢支持</div>
+    <div id="donateSlots"></div>
+    <div class="modal-tip">扫码赞赏 · 这个页面会跟着开奖一起更新<br>长按图片也可保存二维码</div>
+  </div>
+</div>
+
+<!-- ============ 纯计算部分：不碰 DOM，可被离线测试直接抽出来跑 ============ -->
+<script id="core-src">
+(function(){
+  const NR = 33, NB = 16, RP = 10, BP = 4, NT = 5, PRICE = 2;
+  const ZONES = [[1,2,3,4,5,6,7,8,9,10,11],[12,13,14,15,16,17,18,19,20,21,22],[23,24,25,26,27,28,29,30,31,32,33]];
+
+  const STRATS = [
+    {k:'hot',    n:'近期高频', c:'#ff7a5c', rule:'近 30 期开出次数最多的 10 个红球；蓝球取近 30 期最热的 4 个。次数相同按号码从小到大。'},
+    {k:'cold',   n:'遗漏回补', c:'#4f9dff', rule:'距上次开出隔得最久的一批红球取 10 个，蓝球同理——「该出了」那套思路，本页负责检验它。'},
+    {k:'balance',n:'冷热均衡', c:'#ffc861', rule:'高频前 5 + 遗漏前 5 拼成 10 码，两边撞上的用高频榜下一位补齐；蓝球取最热 2 个 + 漏得最久 2 个。'},
+    {k:'zone',   n:'三区均衡', c:'#3ddc97', rule:'把 1–11 / 12–22 / 23–33 三段按近 50 期各段出号比例分配 10 个名额（每段最多 4 个），每段内取高频号码。'},
+    {k:'random', n:'随机基线', c:'#9aa4bd', rule:'用期号当种子摇出 10 码红池和 4 码蓝池，再走和其他四套同一只轮子出 5 注。同一条期号永远摇出同一组，你和页面都能复现。'}
+  ];
+
+  /* 0..6 = 一二三四五六等 + 福运奖；FIX 是档案里三~六等恒定的面值，一二等每期另有真值 */
+  const TIERS = [
+    {n:'一等奖', fix:null}, {n:'二等奖', fix:null}, {n:'三等奖', fix:3000},
+    {n:'四等奖', fix:200},  {n:'五等奖', fix:10},   {n:'六等奖', fix:5}, {n:'福运奖', fix:5}
+  ];
+
+  function C(n,k){ if(k<0||k>n) return 0; let r=1; for(let i=1;i<=k;i++) r=r*(n-i+1)/i; return r; }
+  const pad2 = n => String(n).padStart(2,'0');
+
+  function tierOf(m, blueHit, fy){
+    if(m===6) return blueHit?0:1;
+    if(m===5) return blueHit?2:3;
+    if(m===4) return blueHit?3:4;
+    if(m===3) return blueHit?4:(fy?6:-1);   /* 3 红不中蓝：只有福运奖生效期才算钱 */
+    return blueHit?5:-1;                     /* ≤2 红 + 中蓝 = 六等 */
+  }
+
+  function parse(raw){
+    return (raw||[]).map(r=>{
+      const red = r.red.map(Number), prize = r.prize.map(p=>[p[0], p[1]]);
+      let s=0; for(const v of red) s+=v;
+      const odd = red.filter(v=>v%2).length, big = red.filter(v=>v>=17).length;
+      const zone = [0,0,0]; for(const v of red) zone[v<=11?0:v<=22?1:2]++;
+      return {code:r.code, date:r.date, week:r.week, red, blue:+r.blue, s, odd, big, zone,
+              set:new Set(red), sales:r.sales, pool:r.pool, prize, fy:prize[6][0]>0};
+    });
+  }
+
+  function mulberry(seed){
+    let a = (seed>>>0) || 1;
+    return function(){
+      a = (a + 0x6D2B79F5) >>> 0;
+      let t = Math.imul(a ^ (a>>>15), 1|a);
+      t = (t + Math.imul(t ^ (t>>>7), 61|t)) ^ t;
+      return ((t ^ (t>>>14)) >>> 0) / 4294967296;
+    };
+  }
+
+  /* 只看 rows[a..i-1]，i 可以等于 rows.length（那就是「预测下一期」） */
+  function win(rows, i, W){
+    const a = Math.max(0, i-W);
+    const cnt = new Array(NR+1).fill(0);       // 红球 1..33
+    const bcnt = new Array(NB+1).fill(0);      // 蓝球 1..16
+    const zone = [0,0,0];
+    const sums = [], sales = [], pool = [];
+    for(let k=a;k<i;k++){
+      const r = rows[k];
+      for(const v of r.red) cnt[v]++;
+      bcnt[r.blue]++;
+      for(let z=0;z<3;z++) zone[z] += r.zone[z];
+      sums.push(r.s); sales.push(r.sales); pool.push(r.pool);
+    }
+    return {cnt, bcnt, zone, sums, sales, pool, n:i-a};
+  }
+  /* 遗漏：这一期（下标 i）之前，每个号码隔了多少轮没出。上期刚出 = 0 */
+  function missOf(last, i){
+    return last.map((li,v)=> li<0 ? i : i-1-li);
+  }
+  /* 每个号的当前遗漏 + 历史最长遗漏。
+     历史最长只量「到某一行之前已经漏了几期」——量完再看这一行出没出：
+     先看出没出、再量的话，恰好在这一行回补的那段（也就是每段遗漏的真正长度）
+     一次都量不到，最长值会整体少一期。 */
+  function missStats(rows){
+    const last = new Array(NR+1).fill(-1), mx = new Array(NR+1).fill(0);
+    for(let i=0;i<rows.length;i++){
+      const r = rows[i];
+      for(let v=1;v<=NR;v++){
+        if(last[v]>=0 && i-1-last[v] > mx[v]) mx[v] = i-1-last[v];
+        if(r.set.has(v)) last[v] = i;
+      }
+    }
+    return {cur: missOf(last, rows.length), max: mx};
+  }
+  /* 三区名额：按近 50 期各段实际出号比例分 10 个，每段封顶 4 个（段内只有 11 个号） */
+  function zonePool(zone, cnt, k){
+    const tot = zone[0]+zone[1]+zone[2] || 1;
+    const cap = [4,4,4];
+    const share = [0,1,2].map(z=> Math.min(cap[z], Math.max(1, Math.round(k*zone[z]/tot))));
+    let sum = share[0]+share[1]+share[2], g = 0;
+    while(sum!==k && g++<40){
+      if(sum<k){
+        let b=-1; for(const z of [0,1,2]) if(share[z]<cap[z] && (b<0||zone[z]>zone[b])) b=z;
+        if(b<0) break; share[b]++; sum++;
+      } else {
+        let w=-1; for(const z of [0,1,2]) if(share[z]>1 && (w<0||zone[z]<zone[w])) w=z;
+        if(w<0) break; share[w]--; sum--;
+      }
+    }
+    const pool=[];
+    for(let z=0;z<3;z++){
+      const cand = ZONES[z].slice().sort((a,b)=> cnt[b]-cnt[a] || a-b);
+      for(let q=0;q<share[z]&&q<cand.length;q++) pool.push(cand[q]);
+    }
+    const rest=[1,2,3].flatMap(z=>ZONES[z]).filter(v=>pool.indexOf(v)<0).sort((a,b)=>cnt[b]-cnt[a]||a-b);
+    while(pool.length<k && rest.length) pool.push(rest.shift());
+    return pool.slice(0,k).sort((a,b)=>a-b);
+  }
+
+  /* 10 码拆成 5 注的固定轮：第 t 注取「热度榜」上从第 2t 位起的连续 6 个（首尾相接）。
+     步长 = 池子 10 码 ÷ 5 注 = 2，这样 5×6=30 个位置正好摊成每个号 3 次：
+     谁都不霸屏，五注也绝不重样。步长写 3 就摊不匀（会出来 4/4/3/3/3/3/3/3/2/3）。
+     按分数从高到低贪心挑也做不到：第 5 注起已经没有不破封顶的号可用了。 */
+  function ticketsFromPool(ord, blues){
+    const out = [], step = Math.floor(ord.length / NT);
+    for(let t=0;t<NT;t++){
+      const red = [];
+      for(let q=0;q<6;q++) red.push(ord[(t*step+q)%ord.length]);
+      red.sort((a,b)=>a-b);
+      out.push({red, blue:blues[t%blues.length]});
+    }
+    return out;
+  }
+  /* 按近 30 期次数从热到冷排；次数相同小号在前 —— 轮子的顺序就是这个名字顺序 */
+  const byHeat = (pool, cnt) => pool.slice().sort((a,b)=> cnt[b]-cnt[a] || a-b);
+
+  function randomPlan(code){
+    const r = mulberry(+code || 1);
+    const bag=[]; for(let v=1;v<=NR;v++) bag.push(v);
+    for(let i=bag.length-1;i>0;i--){ const j=Math.floor(r()*(i+1)); const t=bag[i]; bag[i]=bag[j]; bag[j]=t; }
+    const shuffled = bag.slice(0,RP);                  /* 摇出来的顺序就是轮子的顺序 */
+    const pool = shuffled.slice().sort((a,b)=>a-b);
+    const bbag=[]; for(let v=1;v<=NB;v++) bbag.push(v);
+    for(let i=bbag.length-1;i>0;i--){ const j=Math.floor(r()*(i+1)); const t=bbag[i]; bbag[i]=bbag[j]; bbag[j]=t; }
+    const bshuf = bbag.slice(0,BP);
+    /* 对照组和另外四套走同一只轮子：五注的形状一样，差别只在「这 10 个号是怎么被挑进池的」 */
+    return {pool, blues:bshuf.slice().sort((a,b)=>a-b), tickets:ticketsFromPool(shuffled, bshuf)};
+  }
+
+  /* 一次性给出五个策略的推荐 */
+  function plan(rows, i, last, lastB, code){
+    const s30 = win(rows,i,30), s50 = win(rows,i,50);
+    const miss = missOf(last,i), bmiss = missOf(lastB,i);
+    const all = []; for(let v=1;v<=NR;v++) all.push(v);
+    const ball = []; for(let v=1;v<=NB;v++) ball.push(v);
+    const byCnt = all.slice().sort((a,b)=> s30.cnt[b]-s30.cnt[a] || a-b);
+    const byMiss = all.slice().sort((a,b)=> miss[b]-miss[a] || a-b);
+    const bal=[]; for(const v of byCnt.slice(0,5)) bal.push(v);
+    for(const v of byMiss){ if(bal.length>=RP) break; if(bal.indexOf(v)<0) bal.push(v); }
+    const bByCnt = ball.slice().sort((a,b)=> s30.bcnt[b]-s30.bcnt[a] || a-b);
+    const bByMiss = ball.slice().sort((a,b)=> bmiss[b]-bmiss[a] || a-b);
+    const bBal = bByCnt.slice(0,2).concat(bByMiss.filter(v=> bByCnt.slice(0,2).indexOf(v)<0).slice(0,2));
+    const out = {};
+    const pools = {hot:byCnt.slice(0,RP), cold:byMiss.slice(0,RP), balance:bal.slice(0,RP),
+                   zone:zonePool(s50.zone, s30.cnt, RP)};
+    const bpools = {hot:bByCnt.slice(0,BP), cold:bByMiss.slice(0,BP), balance:bBal.slice(0,BP),
+                    zone:[bByCnt[0],bByCnt[1],bByMiss[0],bByMiss[1]].filter((v,ix,a)=>a.indexOf(v)===ix).slice(0,BP)};
+    for(const key of Object.keys(pools)){
+      const pool = pools[key].slice().sort((a,b)=>a-b);
+      const blues = bpools[key].slice().sort((a,b)=>a-b);
+      /* 蓝球按近 30 期热度排进轮子里：四码配五注，最热那一个会多拿一注 */
+      const ordered = blues.slice().sort((a,b)=> s30.bcnt[b]-s30.bcnt[a] || a-b);
+      out[key] = {pool, blues, tickets:ticketsFromPool(byHeat(pool, s30.cnt), ordered)};
+    }
+    out.random = randomPlan(code);
+    return {out, s30, s50, miss, bmiss};
+  }
+
+  /* 池子的应有表现：红池命中个数是超几何，蓝池命中率就是 4/16 */
+  function theory(n){
+    const eHit = 6*RP/NR;
+    const varHit = 6*(RP/NR)*(1-RP/NR)*(NR-6)/(NR-1);
+    return {eHit, sdHit:Math.sqrt(varHit), seHit:Math.sqrt(varHit/n),
+            pBlue:BP/NB, seBlue:Math.sqrt((BP/NB)*(1-BP/NB)/n), n};
+  }
+  /* 单注押中任意奖的概率：福运奖生效与否两档 */
+  function pAny(fy){
+    let t=0;
+    for(let m=0;m<=6;m++) for(const b of [0,1]){
+      if(tierOf(m, !!b, fy)>=0) t += C(6,m)*C(NR-6,6-m)*(b?1:NB-1);
+    }
+    return t/(C(NR,6)*NB);
+  }
+  /* 固定奖四档（+福运）的期望返还，按面值算 —— 一二等浮动的部分不在这里 */
+  function eFixed(fy){
+    let e=0;
+    for(let m=0;m<=6;m++) for(const b of [0,1]){
+      const t = tierOf(m, !!b, fy);
+      if(t>=2) e += C(6,m)*C(NR-6,6-m)*(b?1:NB-1)/(C(NR,6)*NB) * TIERS[t].fix;
+    }
+    return e;
+  }
+  /* 和值理论分布：从 1..33 里取 6 个互不相同的数，精确计数（不是正态近似） */
+  function sumHist(){
+    const S = 183;
+    const dp=[]; for(let c=0;c<=6;c++) dp.push(new Array(S+1).fill(0));
+    dp[0][0]=1;
+    for(let v=1;v<=NR;v++) for(let c=6;c>=1;c--) for(let s=S;s>=v;s--) dp[c][s]+=dp[c-1][s-v];
+    const tot = C(NR,6);
+    return dp[6].map(v=>v/tot);
+  }
+  /* 和值分布的期望 / 标准差 / 众数：只从上面那张精确表里算，页面要印的那几个数只认这里 */
+  function sumMoments(){
+    const h = sumHist();
+    let m=0, mode=-1, mp=-1;
+    for(let s=0;s<h.length;s++){ if(!h[s]) continue; m += s*h[s]; if(h[s]>mp){ mp=h[s]; mode=s; } }
+    let v=0; for(let s=0;s<h.length;s++) v += (s-m)*(s-m)*h[s];
+    return {mean:m, sd:Math.sqrt(v), mode, modeP:mp, hist:h};
+  }
+  /* 重号个数（这期与上期相同的红球数）应有分布 */
+  function repeatHist(){
+    const tot = C(NR,6);
+    return [0,1,2,3,4,5,6].map(k=> C(6,k)*C(NR-6,6-k)/tot);
+  }
+  /* 奇偶 / 大小 / 三区 的应有比例，全按「6 个号是从 33 个里不放回抽」精确算 */
+  function hy(k, A){ return C(A,k)*C(NR-A,6-k)/C(NR,6); }
+
+  /* 走一遍历史：第 i 期只用 [0..i-1]，逐期记账，钱按当期档案里的真实单注奖金结 */
+  function settle(rows, i, tickets, fy){
+    const row = rows[i], w = row.set;
+    let pay=0, wins=0, best=-1, detail=[];
+    for(const t of tickets){
+      let m=0; for(const v of t.red) if(w.has(v)) m++;
+      const tier = tierOf(m, t.blue===row.blue, fy);
+      /* 空开那期档案里单注奖金是空的；5 注押中一二等奖的概率不到千万分之一，按 0 结 */
+      const amt = tier<0 ? 0 : (row.prize[tier][1] || TIERS[tier].fix || 0);
+      if(tier>=0 && amt>0){ pay+=amt; wins++; if(best<0||tier<best) best=tier; }
+      detail.push({red:t.red, blue:t.blue, m, tier, amt});
+    }
+    return {pay, wins, best, detail};
+  }
+
+  function backtest(rows, from){
+    const last = new Array(NR+1).fill(-1), lastB = new Array(NB+1).fill(-1);
+    const detail=[];
+    for(let i=0;i<rows.length;i++){
+      if(i>=from){
+        const pl = plan(rows,i,last,lastB,rows[i].code);
+        const rec={code:rows[i].code, date:rows[i].date, week:rows[i].week, red:rows[i].red,
+                   blue:rows[i].blue, s:rows[i].s, odd:rows[i].odd, fy:rows[i].fy,
+                   pool:{}, bpool:{}, hit:{}, bhit:{}, tk:{}, win:{}, pay:{}, best:{}};
+        for(const st of STRATS){
+          const k=st.k, p=pl.out[k].pool, bp=pl.out[k].blues;
+          let h=0; for(const v of rows[i].red) if(p.indexOf(v)>=0) h++;
+          rec.pool[k]=p; rec.bpool[k]=bp; rec.hit[k]=h; rec.bhit[k]=bp.indexOf(rows[i].blue)>=0;
+          const s = settle(rows,i,pl.out[k].tickets,rows[i].fy);
+          rec.tk[k]=s.detail; rec.win[k]=s.wins; rec.pay[k]=s.pay; rec.best[k]=s.best;
+        }
+        detail.push(rec);
+      }
+      for(const v of rows[i].red) last[v]=i;
+      lastB[rows[i].blue]=i;
+    }
+    return {detail, from, n:detail.length};
+  }
+
+  /* 统计从 detail 现算 —— 换窗口只要切片，不用把回测重跑一遍 */
+  function statsOf(detail, th){
+    const n = detail.length, out={n, s:{}};
+    STRATS.forEach(st=> out.s[st.k]={hitSum:0, blue:0, wins:0, bets:0, pay:0, best:-1,
+                                      tier:[0,0,0,0,0,0,0]});
+    for(const r of detail) for(const st of STRATS){
+      const s=out.s[st.k];
+      s.hitSum+=r.hit[st.k]; if(r.bhit[st.k]) s.blue++;
+      s.wins+=r.win[st.k]; s.bets+=NT; s.pay+=r.pay[st.k];
+      if(r.best[st.k]>=0 && (s.best<0 || r.best[st.k]<s.best)) s.best=r.best[st.k];
+      for(const t of r.tk[st.k]) if(t.tier>=0 && t.amt>0) s.tier[t.tier]++;
+    }
+    for(const st of STRATS){
+      const s=out.s[st.k];
+      s.avgHit = n? s.hitSum/n : 0;
+      s.blueRate = n? s.blue/n : 0;
+      s.winRate = s.bets? s.wins/s.bets : 0;
+    }
+    return out;
+  }
+
+  /* 滚动：每 span 期一格，取该格内五套各自的平均命中个数 */
+  function rolling(bt, take, span){
+    const d=bt.detail, N=d.length, out={labels:[], series:{}, blue:{}};
+    STRATS.forEach(s=>{ out.series[s.k]=[]; out.blue[s.k]=[]; });
+    const start=Math.max(span, N-take);
+    for(let i=start;i<N;i+=span){
+      const m=Math.min(span, N-i);
+      out.labels.push(d[i+m-1].code);
+      STRATS.forEach(s=>{
+        let h=0,b=0;
+        for(let k=i;k<i+m;k++){ h+=d[k].hit[s.k]; if(d[k].bhit[s.k]) b++; }
+        out.series[s.k].push(+(h/m).toFixed(3));
+        out.blue[s.k].push(+(b/m*100).toFixed(1));
+      });
+    }
+    return out;
+  }
+
+  /* 明细表分页：q 是期号或开奖号码的子串；页码越界就夹回边界 */
+  function pageDetail(detail, q, page, size){
+    const s = String(q==null?'':q).trim();
+    const all = detail.slice().reverse();
+    const hit = s ? all.filter(r=> r.code.indexOf(s)>=0
+      || (r.red.map(pad2).join('')+'+ '+pad2(r.blue)).replace(/ /g,'').indexOf(s.replace(/ /g,''))>=0) : all;
+    const n = Math.max(1, size||10);
+    const pages = Math.max(1, Math.ceil(hit.length/n));
+    const p = Math.min(Math.max(0, page||0), pages-1);
+    return {rows: hit.slice(p*n, p*n+n), total: hit.length, pages, page:p, size:n};
+  }
+
+  function csvDetail(detail){
+    const head = ['期号','日期','星期','红球','蓝球','和值','奇偶比','福运奖生效']
+      .concat(STRATS.flatMap(s=>[s.n+' 10码红池', s.n+' 4码蓝池', s.n+' 池内红球命中个数', s.n+' 蓝球池中',
+                                 s.n+' 5注号码', s.n+' 中奖注数', s.n+' 当期返奖(元)', s.n+' 最高奖级']));
+    const lines = [head.join(',')];
+    for(const r of detail){
+      const row = [r.code, r.date, r.week, r.red.map(pad2).join(' '), pad2(r.blue), r.s,
+                   r.odd+'/'+(6-r.odd), r.fy?'是':'否'];
+      for(const s of STRATS){
+        row.push(r.pool[s.k].map(pad2).join(' '), r.bpool[s.k].map(pad2).join(' '), r.hit[s.k],
+          r.bhit[s.k]?'是':'否',
+          r.tk[s.k].map(t=> t.red.map(pad2).join(' ')+'+'+pad2(t.blue)).join(' | '),
+          r.win[s.k], r.pay[s.k], r.best[s.k]>=0?TIERS[r.best[s.k]].n:'—');
+      }
+      lines.push(row.join(','));
+    }
+    /* BOM：他用 Excel/WPS 直接双击打开，没有 BOM 中文列名会乱码；号码一律空格分隔防吃前导零 */
+    return '\uFEFF' + lines.join('\r\n') + '\r\n';
+  }
+
+  window.SSQCore = {NR, NB, RP, BP, NT, PRICE, ZONES, STRATS, TIERS, C, pad2, tierOf, parse, plan, win,
+                    missOf, missStats, theory, pAny, eFixed, sumHist, sumMoments, repeatHist, hy, backtest, statsOf, rolling,
+                    ticketsFromPool, byHeat, zonePool, randomPlan, settle, mulberry, pageDetail, csvDetail};
+})();
+</script>
+
+<!-- ============ 页面 ============ -->
+<script>
+const CONFIG = {
+  dataFile: './data/ssq_history.json',
+  drawDays: [0, 2, 4],           /* 周日、周二、周四 */
+  drawHH: 21, drawMM: 15,
+  /* 就一张赞赏码，两个入口都用它：右下角那颗浮标、页脚那行「请作者喝杯咖啡」 */
+  donate: 'https://pic.sl.al/gdrive/pic/2025-11-26/fileid_1aPF614Jn4683MxgdV3UiuvN5lKyCLsdE_%E5%BE%AE%E4%BF%A1%E5%9B%BE%E7%89%87_20251125182103_66_269.jpg'
+};
+
+const $ = id => document.getElementById(id);
+const Core = window.SSQCore;
+const hasChart = typeof window.Chart !== 'undefined';
+const ch = {};
+let DATA = null, ROWS = null, BTFULL = null, BT365 = null;
+
+function fmt(n){ return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g,','); }
+function esc(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function wan(v){
+  if(v==null || !isFinite(v)) return '—';
+  if(v>=1e8) return (v/1e8).toFixed(2)+' 亿元';
+  if(v>=1e4) return fmt(v/1e4)+' 万元';
+  return fmt(v)+' 元';
+}
+function pc(x,d){ return (x*100).toFixed(d==null?2:d)+'%'; }
+function bj(d){ return new Date(d.getTime()+8*3600000); }
+function bjStamp(iso){
+  const t = bj(new Date(iso));
+  return t.toISOString().slice(0,16).replace('T',' ');
+}
+function pad(n){ return String(n).padStart(2,'0'); }
+function f1(x){ return (Math.round(x*10)/10).toFixed(1); }
+function f3(x){ return (Math.round(x*1000)/1000).toFixed(3); }
+
+/* ---------- 背景星点 ---------- */
+(function stars(){
+  let h=''; for(let i=0;i<46;i++)
+    h+='<i style="left:'+(Math.random()*100).toFixed(2)+'%;top:'+(Math.random()*100).toFixed(2)
+      +'%;animation-delay:'+(Math.random()*4).toFixed(2)+'s"></i>';
+  $('stars').innerHTML=h;
+})();
+
+/* ---------- 图表底座 ---------- */
+if(hasChart){
+  Chart.defaults.color='#adb6cd';
+  Chart.defaults.borderColor='rgba(255,255,255,.08)';
+  Chart.defaults.font.family='"PingFang SC","Microsoft YaHei","Hiragino Sans GB",system-ui,sans-serif';
+  Chart.defaults.font.size=11;
+}
+const GRID = {color:'rgba(255,255,255,.06)'};
+function chartEmpty(id, msg){
+  const e=$('e'+id);
+  if(e){ e.textContent=msg||''; e.classList.toggle('show', !!msg); }
+  const cv=$('c'+id); if(cv && msg) cv.style.visibility='hidden';
+  if(cv && !msg) cv.style.visibility='visible';
+}
+function draw(id, cfg){
+  if(!hasChart){ chartEmpty(id,'图表库没加载出来 · 下面的数字照常可读'); return; }
+  const cv=$('c'+id); if(!cv) return;
+  if(ch[id]) ch[id].destroy();
+  chartEmpty(id, null);
+  ch[id]=new Chart(cv, cfg);
+}
+/* 每个图只写自己那点东西，这里负责和默认值逐层合并 ——
+   合并少了 plugins 或 scales 里没写的键会被整块覆盖，图例就变回默认灰字 */
+function baseOpts(spec){
+  const o = spec.options || {};
+  const sc = Object.assign({x:{}, y:{}}, o.scales || {});
+  for(const k of Object.keys(sc)) sc[k] = Object.assign({grid:GRID, ticks:{font:{size:10}}}, sc[k]);
+  const LEG = {labels:{boxWidth:10, boxHeight:10, padding:11}};
+  const TIP = {backgroundColor:'rgba(10,12,21,.94)', borderColor:'rgba(255,255,255,.14)',
+               borderWidth:1, padding:10, displayColors:true};
+  const pl = Object.assign({}, {legend:LEG, tooltip:TIP}, o.plugins || {});
+  if(o.plugins){
+    if(o.plugins.legend) pl.legend = Object.assign({}, LEG, o.plugins.legend,
+      {labels:Object.assign({}, LEG.labels, o.plugins.legend.labels||{})});
+    if(o.plugins.tooltip) pl.tooltip = Object.assign({}, TIP, o.plugins.tooltip);
+  }
+  return Object.assign({responsive:true, maintainAspectRatio:false,
+    interaction:{mode:'index', intersect:false}}, spec, {options:Object.assign({
+    responsive:true, maintainAspectRatio:false, indexAxis:o.indexAxis||'x'}, o, {scales:sc, plugins:pl})});
+}
+
+/* ---------- 号码 ---------- */
+function redBalls(red, blue, cls){
+  const w = new Set(red);
+  return '<span class="pill">'+red.map(v=>'<b class="b2 '+(w.has(v)?'gold':'')+'">'+Core.pad2(v)+'</b>').join('')
+    + '<b class="b2 g">'+Core.pad2(blue)+'</b></span>';
+}
+/* 池子：本期还没开奖，一律中性色 —— 撞没撞上要等号码出来，提前标金是骗眼睛 */
+function poolPill(nums, isBlue){
+  return '<span class="pill">'+nums.map(v=>'<b class="b2'+(isBlue?' g':'')+'">'+Core.pad2(v)+'</b>').join('')+'</span>';
+}
+function poolDigits(pool, won){
+  const hit = new Set(won||[]);
+  return '<div class="pooln">'+pool.map(v=> hit.has(v)?'<b>'+Core.pad2(v)+'</b>':Core.pad2(v)).join(' ')+'</div>';
+}
+/* mark = 那一期的开奖号；传 null 就是「还没开」，一颗都不标 */
+function ticketLines(tks, mark){
+  const w = mark || {red:new Set(), blue:-1};
+  return '<div class="tks">'+tks.map(t=>{
+    const reds = t.red.map(v=> w.red.has(v)?'<b class="win0">'+Core.pad2(v)+'</b>':Core.pad2(v)).join(' ');
+    const bl = (t.blue===w.blue?'<b class="win0">'+Core.pad2(t.blue)+'</b>':'+'+Core.pad2(t.blue));
+    const tag = t.tier>=0 && t.amt>0
+      ? '<span class="tw hit">'+Core.TIERS[t.tier].n+' '+fmt(t.amt)+'</span>'
+      : '<span class="tw">—</span>';
+    return '<div class="tk"><span class="tr">'+reds+'</span><span class="tb">'+bl+'</span>'+tag+'</div>';
+  }).join('')+'</div>';
+}
+
+/* ---------- 顶部 ---------- */
+function renderHero(doc){
+  const r = ROWS[ROWS.length-1];
+  $('heroBalls').innerHTML = r.red.map(v=>'<div class="ball">'+Core.pad2(v)+'</div>').join('')
+    + '<div class="ball blue">'+Core.pad2(r.blue)+'</div>';
+  $('heroDate').textContent = r.date + '（' + r.week + '）· 第 ' + r.code + ' 期';
+  $('heroSales').textContent = wan(r.sales);
+  $('heroPool').textContent = wan(r.pool);
+  $('hpCount').textContent = fmt(ROWS.length);
+  $('hpFirst').textContent = ROWS[0].date;
+  $('hpLastCode').textContent = r.code;
+  $('heroFy').innerHTML = fyBadge(r);
+
+  const nx = nextDraw(ROWS);
+  $('hpNextCode').textContent = nx.code + '（待开）';
+  $('hpNextCode').dataset.at = nx.at.toISOString();
+
+  const upd = bjStamp(doc.fetchedAt);
+  $('hpState').innerHTML = '自动更新 · 最后一次更新 <b style="color:var(--gold)">'+upd+'</b> · 档案截至 '
+    + r.date + '（' + r.week + '）';
+  $('stamp').textContent = '第 ' + nx.code + ' 期预计 ' + nx.label + ' 开奖 · 档案 ' + fmt(ROWS.length)
+    + ' 期 · 最后一次更新 ' + upd;
+}
+
+/* 福运奖那两档门槛是能从档案里读出来的：生效期有注数，停发期注数为 0 */
+function fyBadge(r){
+  const lim15 = 15e8, lim3 = 3e8;
+  if(r.fy) return '<b>福运奖生效中</b> · 本期开出 ' + fmt(r.prize[6][0]) + ' 注 × 5 元';
+  const miss = (lim15 - (r.pool||0))/1e8;
+  if(r.pool!=null && r.pool>=lim15)
+    return '<b>福运奖待启动</b> · 奖池 ' + (r.pool/1e8).toFixed(2) + ' 亿已过 15 亿线，按规则下一期起生效';
+  return '福运奖停发 · 奖池 ' + (r.pool==null?'—':(r.pool/1e8).toFixed(2)+' 亿')
+    + ' · 距 15 亿启动线还差 ' + miss.toFixed(2) + ' 亿';
+}
+
+function nextDraw(rows, now){
+  const last = rows[rows.length-1];
+  const b = bj(now || new Date());                /* 北京墙钟写进 UTC 字段，再按 UTC 算时刻 */
+  const today = b.toISOString().slice(0,10);
+  let day = new Date(Date.UTC(b.getUTCFullYear(), b.getUTCMonth(), b.getUTCDate()));
+  for(let g=0; g<10; g++){
+    if(!isDrawDay(day)){ day = new Date(day.getTime()+86400000); continue; }
+    const ds = day.toISOString().slice(0,10);
+    const t = day.getTime() + CONFIG.drawHH*3600000 + CONFIG.drawMM*60000;
+    /* 到了 21:15 但档案里还没有这天的号 ⇒ 今晚这一期已经开了、还没公布：
+       期号和日期都得停在这一期上，不能跳到下一期去（不然标签写周二、期号却是周日的）。 */
+    if(t > b.getTime() || (ds === today && last.date < ds)) break;
+    day = new Date(day.getTime()+86400000);
+  }
+  const at = new Date(day.getTime() - 8*3600000);
+  const wall = day;
+  const dateStr = wall.toISOString().slice(0,10);
+  const y = +dateStr.slice(0,4), ly = +last.code.slice(0,4);
+  const code = y>ly ? y+'001' : y+pad3(+last.code.slice(4)+1);
+  const wd = '日一二三四五六'[wall.getUTCDay()];
+  return {code, at, label: dateStr+'（'+wd+'）'};
+}
+function isDrawDay(d){ return CONFIG.drawDays.indexOf(d.getUTCDay())>=0; }
+function pad3(n){ return String(n).padStart(3,'0'); }
+
+function tickCountdown(){
+  const el = $('hpNextCode'); if(!el.dataset.at) return;
+  const ms = new Date(el.dataset.at) - new Date();
+  $('cdText').textContent = ms>0 ? '距开奖 '+Math.floor(ms/86400000)+'天'
+      + pad(Math.floor(ms%86400000/3600000))+':'+pad(Math.floor(ms%3600000/60000))+':'+pad(Math.floor(ms%60000/1000))
+      : '正在等当晚号码公布';
+}
+setInterval(tickCountdown, 1000);
+
+/* ---------- 本期推荐 ---------- */
+function renderPlans(){
+  const N = ROWS.length;
+  const last = new Array(Core.NR+1).fill(-1), lastB = new Array(Core.NB+1).fill(-1);
+  for(let i=0;i<N;i++){ for(const v of ROWS[i].red) last[v]=i; lastB[ROWS[i].blue]=i; }
+  const nx = nextDraw(ROWS);
+  const p = Core.plan(ROWS, N, last, lastB, nx.code);
+  const th = BT365.th;
+  /* 尺子按样本量算，不写死小数：红池那把是「平均命中个数」，蓝池那把是「命中率」。
+     卡片比的是「实测均值 vs 理论常数」——理论那一条没有抽样误差，所以只用一条带，
+     并且印出来的这条 ± 就是判定用的那一条（下面「策略回测」比的是两列实测，那里才用两带相加）。 */
+  const BANDR = 1.96*th.seHit, BANDB = 1.96*th.seBlue;
+  const LINES = '95% 区间';
+
+  const seenPool = {};
+  const dupOf = Core.STRATS.map(s=>{
+    const key = p.out[s.k].pool.join('')+'|'+p.out[s.k].blues.join('');
+    const prev = seenPool[key];
+    seenPool[key] = s.n;
+    return prev || '';
+  });
+
+  $('planGrid').innerHTML = Core.STRATS.map((s, idx)=>{
+    const pl = p.out[s.k], st = BT365.s[s.k];
+    const verdictR = st.avgHit>th.eHit+BANDR ? ' <span class="up">高出 '+LINES+'</span>'
+      : st.avgHit<th.eHit-BANDR ? ' <span class="down">低于 '+LINES+'</span>'
+      : ' <span style="color:var(--dimmer)">和运气分不开</span>';
+    const verdictB = st.blueRate>th.pBlue+BANDB ? ' <span class="up">高出'+LINES+'</span>'
+      : st.blueRate<th.pBlue-BANDB ? ' <span class="down">低于'+LINES+'</span>'
+      : ' <span style="color:var(--dimmer)">分不开</span>';
+    return '<div class="card" style="--c:'+s.c+'">'
+      + '<div class="c-head"><span class="c-name">'+s.n+'</span>'
+      + '<span class="c-tag">'+(s.k==='random'?'对照':'策略')+'</span></div>'
+      + '<div class="c-pool">'
+      + '<div class="c-line"><span class="lab">红 10 码</span>'+poolPill(pl.pool, false)+'</div>'
+      + '<div class="c-line"><span class="lab">蓝 4 码</span>'+poolPill(pl.blues, true)+'</div>'
+      + '<div class="c-line"><span class="lab">5 注</span><span style="flex:1">'
+      +   ticketLines(pl.tickets.map(t=>({red:t.red, blue:t.blue, tier:-1, amt:0})), null)
+      + '</span></div>'
+      + '</div>'
+      + (dupOf[idx] ? '<div class="c-sub" style="border:none;padding:0;color:#ffbe6a">本期这一组撞上了「'+dupOf[idx]+'」——两条路数算出同一批号码，不是重复印，是这期真分不开</div>' : '')
+      + '<div class="c-rule">'+s.rule+'</div>'
+      + '<div class="c-sub">近 '+BT365.n+' 期回测 · 红池平均命中 <b>'+f3(st.avgHit)+' 个</b>'
+      + '　纯运气 <b>'+f3(th.eHit)+' 个</b>'+verdictR+'（±'+f3(BANDR)+' 个，判定用的就是这条）</div>'
+      + '<div class="c-sub" style="border:none;padding-top:2px">蓝池命中 <b>'+pc(st.blueRate,1)+'</b>'
+      + '　纯运气 <b>'+pc(th.pBlue,1)+'</b>'+verdictB+'（±'+(BANDB*100).toFixed(2)+'pp，判定用的就是这条）'
+      + ' · 每期 5 注 10 元</div>'
+      + '</div>';
+  }).join('');
+  const flags = Core.STRATS.map(s=>{
+    const st = BT365.s[s.k];
+    const n = (st.avgHit>th.eHit+BANDR || st.avgHit<th.eHit-BANDR ? 1 : 0)
+            + (st.blueRate>th.pBlue+BANDB || st.blueRate<th.pBlue-BANDB ? 1 : 0);
+    return {s, n};
+  });
+  const tot = flags.reduce((a,f)=>a+f.n, 0);
+  const names = flags.filter(f=>f.n).map(f=>f.s.n);
+  const ctrlFlag = flags.find(f=>f.s.k==='random').n > 0;
+  $('planFlag').innerHTML = '五张卡用的是同一把尺子：近 '+BT365.n+' 期实测均值，比「纯运气」那条常数，95% 区间。'
+    + '这一轮 5 套 × 2 把尺子 = '+Core.STRATS.length*2+' 次比较，越线的 <b>'+tot+' 次</b>'
+    + (tot ? '（'+names.join('、')+'）' : '') + '。'
+    + (ctrlFlag
+      ? '<b>对照组自己都越线了 —— 那是尺子在抖，不是谁算得准。</b>'
+      : '95% 的判据本来就会偶然误报：十次比较里冒一次很正常，不能当成本事。')
+    + ' 开奖机没有记忆，号码之间彼此独立，这是这类游戏的定义。';
+
+  requestAnimationFrame(()=>document.querySelectorAll('#planGrid .card').forEach((c,i)=>
+    setTimeout(()=>c.classList.add('in'), i*70)));
+}
+
+/* ---------- 趋势图 ---------- */
+function heatChart(W){
+  const i = ROWS.length;
+  const s = Core.win(ROWS, i, W||i);
+  const exp = s.n*6/Core.NR;
+  const labels = []; for(let v=1;v<=Core.NR;v++) labels.push(Core.pad2(v));
+  const cnt = labels.map((_,ix)=> s.cnt[ix+1]);
+  const gap = cnt.map(c=> c-exp);
+  const maxAbs = Math.max(...gap.map(Math.abs), 1);
+  draw('Heat', baseOpts({
+    data:{labels, datasets:[
+      {type:'bar', label:'出现次数', data:cnt, order:2,
+        backgroundColor: gap.map(g=> (g>=0?'rgba(255,92,92,':'rgba(61,220,151,')
+          + (0.32+0.5*Math.abs(g)/maxAbs) + ')'),
+        borderRadius:5, borderWidth:0},
+      {type:'line', label:'均匀期望 '+fmt(exp)+' 次', data:labels.map(()=>exp), order:1,
+        borderColor:'#ffc861', borderWidth:1.6, borderDash:[6,4], pointRadius:0, tension:0}
+    ]},
+    options:{plugins:{legend:{labels:{boxWidth:10,font:{size:11}}},
+      tooltip:{callbacks:{label:c=> c.dataset.label+'：'+fmt(c.parsed.y)+(c.datasetIndex===0
+        ? '（比期望'+(gap[c.dataIndex]>=0?'多':'少')+' '+fmt(Math.abs(gap[c.dataIndex]))+' 次）':'')
+      }}},
+      scales:{x:{grid:{display:false},ticks:{font:{size:9},maxRotation:0,autoSkip:false}},
+              y:{grid:GRID,ticks:{font:{size:10},callback:v=>fmt(v)}}}}
+  }));
+  const p = 6/Core.NR, sd = Math.sqrt(s.n*p*(1-p));
+  const Z = sumZ();
+  $('heatNote').textContent = (W?('近 '+s.n+' 期'):'全部 '+fmt(s.n)+' 期')+' · 每期 6 个红球位 · 每个号码期望 '
+    + fmt(exp)+' 次 · 随机波动的典型幅度约 ±'+fmt(3*sd)+' 次（3 倍标准差）'
+    + (W?'':' —— 全档案里最「不像纯随机」的一处是和值：实测均值 '+Z.mean.toFixed(2)+' 对理论 '
+        +Z.SM.mean.toFixed(2)+'，差 '+Math.abs(Z.z).toFixed(1)+' 个标准误，小号偏多；'
+        +'它不集中在某一年（'+Z.years+' 个年份里单年最大只到 '+Math.abs(Z.worst).toFixed(1)
+        +' 个标准误，还是 '+Z.worstY+' 年），本页不拿它做说法。');
+}
+
+/* 和值那一处偏移有多反常：全档案一个 z，再按年各算一个 z 看它是不是集中在某一年。
+   理论期望和标准差一律从 Core 那张精确分布表里取，页面不许自己写死小数。 */
+let SUMZ = null;
+function sumZ(){
+  if(SUMZ) return SUMZ;
+  const SM = Core.sumMoments(), N = ROWS.length;
+  const mean = ROWS.reduce((a,r)=>a+r.s,0)/N;
+  const z = (mean-SM.mean)/(SM.sd/Math.sqrt(N));
+  const byY = {};
+  ROWS.forEach(r=>{ const y=r.code.slice(0,4); (byY[y]=byY[y]||[]).push(r.s); });
+  let worst=0, worstY='';
+  for(const y in byY){
+    const a = byY[y], m = a.reduce((t,v)=>t+v,0)/a.length;
+    const zz = (m-SM.mean)/(SM.sd/Math.sqrt(a.length));
+    if(Math.abs(zz)>Math.abs(worst)){ worst=zz; worstY=y; }
+  }
+  return SUMZ = {SM, mean, z, worst, worstY, years:Object.keys(byY).length};
+}
+
+function missChart(){
+  const st = Core.missStats(ROWS);
+  const cur = st.cur, mx = st.max;
+  const labels = []; for(let v=1;v<=Core.NR;v++) labels.push(Core.pad2(v));
+  const c = labels.map((_,ix)=> cur[ix+1]), m = labels.map((_,ix)=> mx[ix+1]);
+  draw('Miss', baseOpts({
+    data:{labels, datasets:[
+      {type:'bar', label:'当前遗漏', data:c, backgroundColor:'rgba(79,157,255,.72)', borderRadius:4},
+      {type:'bar', label:'历史最长遗漏', data:m, backgroundColor:'rgba(255,255,255,.14)', borderRadius:4}
+    ]},
+    options:{scales:{x:{grid:{display:false},ticks:{font:{size:9},maxRotation:0,autoSkip:false}},
+      y:{grid:GRID,title:{display:true,text:'期',color:'#9aa4bd',font:{size:10}}}}}
+  }));
+  /* 遗漏的期望值不用假设：每个号码每期出现的概率是 6/33，「隔 k 期没出」的期望就是 (1-p)/p */
+  const p = 6/Core.NR;
+  const hot = labels.map((_,ix)=>ix+1).sort((a,b)=> cur[b]-cur[a])[0];
+  $('missNote').textContent = '遗漏 = 距今隔了多少期没开出来，上期刚开出记 0 期 · 纯随机下平均隔 '
+    + ((1-p)/p).toFixed(1) + ' 期就该再见到一个号码 · 现在漏得最久的是 ' + Core.pad2(hot)
+    + '，已 ' + cur[hot] + ' 期；它历史上最长一次遗漏 ' + mx[hot] + ' 期';
+}
+
+function mixChart(kind){
+  const N=ROWS.length, W=Math.min(60,N);
+  if(kind==='sum'){
+    const SM = Core.sumMoments();
+    const rows=ROWS.slice(N-W);
+    draw('Mix', baseOpts({
+      data:{labels:rows.map(r=>r.code.slice(4)), datasets:[
+        {type:'line', label:'红球和值', data:rows.map(r=>r.s), borderColor:'#ff7a5c', borderWidth:2,
+         pointRadius:2.5, pointBackgroundColor:'#ffc861', tension:.25, fill:false},
+        {type:'line', label:'期望 '+SM.mean.toFixed(2), data:rows.map(()=>SM.mean), borderColor:'#4f9dff', borderWidth:1.4,
+         borderDash:[6,4], pointRadius:0},
+        {type:'line', label:'近 30 期均值', data:rows.map((_,k)=>{
+          if(k<29) return null; let s=0; for(let j=k-29;j<=k;j++) s+=rows[j].s; return +(s/30).toFixed(2);}),
+          borderColor:'#ffc861', borderWidth:1.4, pointRadius:0, spanGaps:false}
+      ]},
+      options:{scales:{x:{grid:GRID,ticks:{font:{size:9},maxTicksLimit:12}},
+        y:{grid:GRID,suggestedMin:60,suggestedMax:150}}}
+    }));
+    $('mixNote').textContent = '近 '+W+' 期（'+rows[0].code+' → '+rows[rows.length-1].code
+      +'）· 六个红球相加，理论期望 '+SM.mean.toFixed(2)+'、最常见的就是 '+SM.mode
+      +'（'+(SM.modeP*100).toFixed(2)+'%）· 折线在 '+SM.mean.toFixed(0)+' 上下怎么摆都不算信号';
+  } else if(kind==='hist'){
+    const th=Core.sumHist();
+    const cnt=new Array(184).fill(0);
+    for(const r of ROWS) cnt[r.s]++;
+    const lo=21, hi=183, labels=[]; for(let s=lo;s<=hi;s++) labels.push(s);
+    draw('Mix', baseOpts({
+      data:{labels, datasets:[
+        {type:'bar', label:'实际期数', data:labels.map(s=>cnt[s]), backgroundColor:'rgba(255,200,97,.55)', borderRadius:3},
+        {type:'line', label:'理论概率 × 期数', data:labels.map(s=>+(th[s]*ROWS.length).toFixed(1)),
+         borderColor:'#4f9dff', borderWidth:2, pointRadius:0, tension:.3}
+      ]},
+      options:{scales:{x:{grid:GRID,ticks:{font:{size:9},maxTicksLimit:16}},y:{grid:GRID,ticks:{callback:v=>fmt(v)}}}}
+    }));
+    $('mixNote').textContent = '全部 '+fmt(ROWS.length)+' 期的和值分布 · 蓝色那条是「从 1–33 里不放回取 6 个」精确数出来的'
+      +'（不是正态近似）· 它俩贴合得越好，说明这张彩票越接近纯随机（这正是应该看到的样子）';
+  } else if(kind==='sales'){
+    const rows=ROWS.slice(N-W);
+    draw('Mix', baseOpts({
+      data:{labels:rows.map(r=>r.date.slice(5)), datasets:[
+        {type:'line', label:'当期销售额（元）', data:rows.map(r=>r.sales), borderColor:'#3ddc97', borderWidth:2,
+         pointRadius:2, tension:.25, fill:{target:'origin', above:'rgba(61,220,151,.08)'}}
+      ]},
+      options:{scales:{x:{grid:GRID,ticks:{font:{size:9},maxTicksLimit:10}},
+        y:{grid:GRID,ticks:{font:{size:10},callback:v=> (v/1e8).toFixed(1)+' 亿'}}}}
+    }));
+    $('mixNote').textContent = '近 '+W+' 期销售额 · 双色球每周二期（周二、四、日），一期约 '
+      + (rows[0].sales?wan(rows[0].sales):'—') + ' 上下 · 计提口径见下方那张表';
+  } else {
+    const rows=ROWS.slice(N-W);
+    draw('Mix', baseOpts({
+      data:{labels:rows.map(r=>r.date.slice(5)), datasets:[
+        {type:'line', label:'开奖后一等奖奖池（元）', data:rows.map(r=>r.pool), borderColor:'#ffc861', borderWidth:2,
+         pointRadius:2, tension:.25, fill:{target:'origin', above:'rgba(255,200,97,.08)'},
+         yAxisID:'y'},
+        {type:'line', label:'福运奖启动线 15 亿', data:rows.map(()=>15e8), borderColor:'#ff5f43', borderWidth:1.4,
+         borderDash:[6,4], pointRadius:0, yAxisID:'y'},
+        {type:'line', label:'福运奖停止线 3 亿', data:rows.map(()=>3e8), borderColor:'#4f9dff', borderWidth:1.4,
+         borderDash:[3,3], pointRadius:0, yAxisID:'y'}
+      ]},
+      options:{scales:{x:{grid:GRID,ticks:{font:{size:9},maxTicksLimit:10}},
+        y:{grid:GRID,ticks:{font:{size:10},callback:v=> (v/1e8).toFixed(0)+' 亿'}}}}
+    }));
+    const fy = ROWS.filter(r=>r.fy).length;
+    const top = ROWS.slice().sort((a,b)=> (b.pool||0)-(a.pool||0))[0];
+    $('mixNote').textContent = '近 '+W+' 期奖池 · 全档案最高 '+wan(top.pool)+'（第 '+top.code+' 期）'
+      + ' · 福运奖只在奖池过 15 亿时启动、某期开奖后跌破 3 亿即停发，档案里生效过 '+fy+' 期';
+  }
+}
+
+function repeatChart(){
+  const th = Core.repeatHist();
+  const cnt = new Array(7).fill(0);
+  for(let i=1;i<ROWS.length;i++){
+    let k=0; for(const v of ROWS[i].red) if(ROWS[i-1].set.has(v)) k++;
+    cnt[k]++;
+  }
+  const N = ROWS.length-1;
+  draw('Repeat', baseOpts({
+    data:{labels:[0,1,2,3,4,5,6], datasets:[
+      {type:'bar', label:'实测期数', data:cnt, backgroundColor:'rgba(255,122,92,.7)', borderRadius:5},
+      {type:'bar', label:'应有期数', data:th.map(p=>+(p*N).toFixed(1)), backgroundColor:'rgba(79,157,255,.35)', borderRadius:5}
+    ]},
+    options:{scales:{x:{grid:GRID,ticks:{font:{size:10},callback:v=>v+' 个'}},
+      y:{grid:GRID,ticks:{callback:v=>fmt(v)}}}}
+  }));
+  const avg = cnt.reduce((a,v,ix)=>a+v*ix,0)/N;
+  $('repeatNote').textContent = '除第一期外 '+fmt(N)+' 期 · 应有期望 '+th.reduce((a,p,ix)=>a+p*ix,0).toFixed(2)
+    +' 个（6×6/33）· 实测均值 '+avg.toFixed(2)+' 个 · 蓝色是「两期毫无关系」算出来的，贴得上就说明没有记忆';
+}
+
+function ratioChart(){
+  const W=Math.min(200, ROWS.length), rows=ROWS.slice(ROWS.length-W);
+  const odd=[0,0,0,0,0,0,0], big=[0,0,0,0,0,0,0], zone=[0,0,0];
+  for(const r of rows){ odd[r.odd]++; big[r.big]++; for(let z=0;z<3;z++) zone[z]+=r.zone[z]; }
+  const N=rows.length, slots=N*6;
+  /* 1–33 里奇数 17 个、17–33 大号 17 个 ⇒ 两者应有分布同为超几何 C(17,k)C(16,6-k)/C(33,6)
+     三区各 11 个号 ⇒ 每区期望 2 个，出号占比各 1/3 */
+  const hy = k => Core.hy(k, 17);
+  const defs=[
+    {k:'奇数个数', arr:odd, tot:N, exp:[0,1,2,3,4,5,6].map(hy), unit:'期', color:'#ff7a5c',
+     lab:['0 个（全偶）','1 个','2 个','3 个','4 个','5 个','6 个（全奇）']},
+    {k:'大号个数（17–33）', arr:big, tot:N, exp:[0,1,2,3,4,5,6].map(hy), unit:'期', color:'#4f9dff',
+     lab:['0 个','1 个','2 个','3 个','4 个','5 个','6 个']},
+    {k:'三区出号占比', arr:zone, tot:slots, exp:[1/3,1/3,1/3], unit:'个号', color:'#3ddc97',
+     lab:['一区（1–11）','二区（12–22）','三区（23–33）']}
+  ];
+  $('ratioBox').innerHTML = defs.map(d=>{
+    const maxExp = Math.max.apply(null, d.exp)*100;
+    return d.lab.map((lb,i)=>{
+      const act = d.arr[i]/d.tot*100, exp = d.exp[i]*100;
+      return '<div class="rrow"><div class="rhead"><span class="k">'+d.k+' · '+lb+'</span>'
+        + '<span class="v num">'+fmt(d.arr[i])+' '+d.unit+' · <b>'+act.toFixed(1)+'%</b></span></div>'
+        + '<div class="duo"><span>实测</span><div class="bar" style="--c:'+d.color+'"><i style="width:'
+        + Math.min(100, act/maxExp*100).toFixed(1)+'%"></i></div>'
+        + '<span class="exp">期望 '+exp.toFixed(1)+'%</span></div></div>';
+    }).join('');
+  }).join('');
+  $('ratioNote').textContent = '近 '+N+' 期 · 「期望」按「6 个号从 1–33 里不放回抽出」精确算（奇数 17 个、大号 17 个、每区 11 个）';
+}
+
+/* ---------- 回测 ---------- */
+function btView(n){
+  const detail = n ? BTFULL.detail.slice(Math.max(0, BTFULL.detail.length-n)) : BTFULL.detail;
+  const th = Core.theory(detail.length);
+  return Object.assign({th, from: detail.length?detail[0].code:ROWS[0].code}, Core.statsOf(detail, th));
+}
+
+function btChart(n){
+  const bt = btView(n), th = bt.th;
+  const labels = Core.STRATS.map(s=>s.n);
+  const act = Core.STRATS.map(s=> +bt.s[s.k].avgHit.toFixed(3));
+  draw('Bt', baseOpts({
+    data:{labels, datasets:[
+      {type:'bar', label:'红池平均命中个数', data:act, borderRadius:6,
+       backgroundColor: Core.STRATS.map(s=> s.k==='random' ? 'rgba(154,164,189,.7)' : 'rgba(255,200,97,.7)')},
+      {type:'line', label:'纯运气应有 '+f3(th.eHit)+' 个', data:labels.map(()=> +th.eHit.toFixed(3)),
+       borderColor:'#4f9dff', borderWidth:1.6, borderDash:[6,4], pointRadius:0}
+    ]},
+    options:{scales:{x:{grid:GRID,ticks:{font:{size:10}}},
+      y:{grid:GRID,suggestedMin:1.6,suggestedMax:2.0,ticks:{callback:v=>v+' 个'}}}}
+  }));
+  const actB = Core.STRATS.map(s=> +(bt.s[s.k].blueRate*100).toFixed(2));
+  draw('BtBlue', baseOpts({
+    data:{labels, datasets:[
+      {type:'bar', label:'蓝池命中率', data:actB, borderRadius:6,
+       backgroundColor: Core.STRATS.map(s=> s.k==='random' ? 'rgba(154,164,189,.7)' : 'rgba(79,157,255,.7)')},
+      {type:'line', label:'纯运气应有 25%', data:labels.map(()=>25),
+       borderColor:'#ffc861', borderWidth:1.6, borderDash:[6,4], pointRadius:0}
+    ]},
+    options:{scales:{x:{grid:GRID,ticks:{font:{size:10}}},
+      y:{grid:GRID,suggestedMin:20,suggestedMax:30,ticks:{callback:v=>v+'%'}}}}
+  }));
+
+  const spreadR = Math.max(...act)-Math.min(...act);
+  const spreadB = Math.max(...actB)-Math.min(...actB);
+  const cutR = 1.96*th.seHit*2, cutB = 1.96*th.seBlue*2*100;
+  /* 判据要把线本身印出来：五列的「拉开」最坏能顶到两条误差带相加，只报单条 ±
+     的话样本一翻倍就会出现「拉开比 ± 大」却仍写「分不开」——数字看着打脸。 */
+  $('btNote').textContent = '回测 '+fmt(bt.n)+' 期 · 10 码红池纯运气平均命中 '+f3(th.eHit)+' 个'
+    +'，这个样本量的抽样误差 ±'+(1.96*th.seHit).toFixed(3)+' 个（95%）· 五列实际拉开 '
+    +spreadR.toFixed(3)+' 个'+ (spreadR>cutR
+      ? ' —— 越过了分得开的线（两带相加 '+cutR.toFixed(3)+' 个），值得再看是哪套策略、哪几期'
+      : ' —— 没越过那条线（两带相加 '+cutR.toFixed(3)+' 个），分不开');
+  $('btBlueNote').textContent = '4 码蓝池纯运气命中 25.00% · 样本 '+fmt(bt.n)+' 期 ⇒ 抽样误差 ±'
+    +(1.96*th.seBlue*100).toFixed(2)+'pp · 五列拉开 '+spreadB.toFixed(2)+'pp'+ (spreadB>cutB
+      ? ' —— 越过了分得开的线（两带相加 '+cutB.toFixed(2)+'pp）'
+      : ' —— 没越过那条线（两带相加 '+cutB.toFixed(2)+'pp），分不开');
+
+  const line = Core.rolling(BTFULL, 300, 100);
+  draw('BtLine', baseOpts({
+    data:{labels:line.labels, datasets: Core.STRATS.map(s=>({
+      type:'line', label:s.n, data:line.series[s.k], borderColor:s.c, borderWidth:s.k==='random'?2.2:1.5,
+      borderDash:s.k==='random'?[6,4]:[], pointRadius:0, tension:.2, spanGaps:true}))
+      .concat([{type:'line', label:'理论 '+f3(Core.theory(1).eHit), data:line.labels.map(()=> +Core.theory(1).eHit.toFixed(3)),
+        borderColor:'#4f9dff', borderWidth:1.2, borderDash:[3,3], pointRadius:0}])},
+    options:{scales:{x:{grid:GRID,ticks:{font:{size:9},maxTicksLimit:8}},
+      y:{grid:GRID,ticks:{callback:v=>v+' 个'}}}}
+  }));
+
+  const total = bt.n*Core.NT*Core.PRICE;
+  $('btMoney').innerHTML = Core.STRATS.map(s=>{
+    const st=bt.s[s.k], net=st.pay-total;
+    return '<tr><td class="l"><span class="pill" style="gap:7px"><b class="b2" style="background:'+s.c+';color:#0b0f18;border-radius:8px;width:22px">'
+      + s.n.slice(0,1)+'</b>'+s.n+'</span></td>'
+      + '<td class="num">'+fmt(bt.n)+'</td>'
+      + '<td class="num">'+fmt(st.bets)+' 注</td>'
+      + '<td class="num">'+fmt(st.wins)+'</td>'
+      + '<td class="num">'+pc(st.winRate,2)+'</td>'
+      + '<td class="num">'+(st.best>=0?Core.TIERS[st.best].n:'—')+'</td>'
+      + '<td class="num">'+fmt(total)+' 元</td>'
+      + '<td class="num">'+fmt(st.pay)+' 元</td>'
+      + '<td class="num '+ (net>=0?'up':'down') +'">'+(net>=0?'+':'−')+fmt(Math.abs(net))+' 元</td>'
+      + '<td class="num">'+pc(st.pay/total,1)+'</td></tr>';
+  }).join('');
+
+  /* 理论那一栏不写死：按回测里每期「福运奖有没有生效」逐期加权 */
+  let expWin = 0;
+  for(const r of (n? BTFULL.detail.slice(Math.max(0,BTFULL.detail.length-n)) : BTFULL.detail))
+    expWin += Core.NT * Core.pAny(r.fy);
+  $('btMoneyNote').innerHTML = '单注 2 元 → 每期每套押 '+Core.NT+' 注 = 10 元；返奖按<b>那一期的真实单注奖金</b>结'
+    +'（一二等奖档案里印多少就算多少，不是拿「500 万」当常量）<br>'
+    +'这个样本量下按规则应有 <b>'+f1(expWin)+'</b> 注中过任意奖（福运奖生效的期数中奖面从 '
+    +pc(Core.pAny(false))+' 涨到 '+pc(Core.pAny(true))+'）；'
+    +'五列各押各的，<b>没有任何一列能靠「押得准」跑赢</b>——因为五列的期望注数完全相同，差别只在运气。<br>'
+    +'固定奖四档每 2 元只退回约 <b>'+Core.eFixed(false).toFixed(3)+' 元</b>（'+pc(Core.eFixed(false)/2,1)
+    +'），加上一二等奖那部分才是官方实际派奖率 <b>'+DATA.realRate.toFixed(2)+'%</b>。'
+    +'一二等奖占掉返奖的 '+DATA.floatShare.toFixed(1)+'%，而它们对一个只买 '+Core.NT+' 注的人概率是：一等 '
+    +Core.NT+'/'+fmt(Core.C(Core.NR,6)*Core.NB)+'、一二等合计 '+Core.NT+'/'+fmt(Core.C(Core.NR,6))
+    +' —— 这就是「官方退一半、你拿不回一半」的全部原因。';
+}
+
+/* ---------- 逐期明细：搜索 + 每页 N 期 + 翻页 ---------- */
+const DT = {q:'', page:0, size:10};
+
+function detailTable(){
+  const res = Core.pageDetail(BTFULL.detail, DT.q, DT.page, DT.size);
+  DT.page = res.page;
+  $('btHead').innerHTML = '<th>期号</th><th>开奖号码</th><th>和值 · 奇偶</th>'
+    + Core.STRATS.map(s=>'<th>'+s.n+'</th>').join('') + '<th>押到 200 元及以上的</th>';
+  if(!res.rows.length){
+    $('btBody').innerHTML = '<tr><td colspan="'+(4+Core.STRATS.length)+'" class="dt-none">没有期号或号码里含「'
+      + esc(DT.q)+'」的记录</td></tr>';
+  } else {
+    $('btBody').innerHTML = res.rows.map(r=>{
+      const mark = {red:new Set(r.red), blue:r.blue};
+      const tds = Core.STRATS.map(s=> '<td>'+poolDigits(r.pool[s.k], r.red)
+        + '<div class="mk '+(r.hit[s.k]>=4?'y':'n')+'">红 '+r.hit[s.k]+' 个 · '+(r.bhit[s.k]?'蓝中':'蓝空')+'</div>'
+        + ticketLines(r.tk[s.k], mark)
+        + '<div class="pooln">'+(r.pay[s.k]>0?'当期返奖 <b>'+fmt(r.pay[s.k])+' 元</b>':'返奖 0 元')+'</div></td>').join('');
+      const who = Core.STRATS.filter(s=>r.best[s.k]>=0 && r.best[s.k]<=3).map(s=>s.n+' '+Core.TIERS[r.best[s.k]].n);
+      return '<tr><td class="num">'+r.code+'<div style="color:var(--dimmer);font-size:.7rem">'+r.date.slice(5)+' '+r.week+'</div></td>'
+        + '<td>'+redBalls(r.red, r.blue)+'</td>'
+        + '<td class="num">'+r.s+'<div style="color:var(--dimmer);font-size:.7rem">'+r.odd+'奇'+(6-r.odd)+'偶'
+          + (r.fy?'<span style="color:#ffbe6a"> · 福运</span>':'')+'</div></td>'
+        + tds
+        + '<td class="mk '+(who.length?'y':'n')+'">'+(who.length?who.join('<br>'):'—')+'</td></tr>';
+    }).join('');
+  }
+  $('dtInfo').textContent = '共 '+fmt(res.total)+' 期'
+    + (DT.q ? '（匹配「'+DT.q+'」）' : '（全档案，从新到旧）')
+    + ' · 第 '+(res.page+1)+' / '+res.pages+' 页';
+  $('dtPrev').disabled = res.page <= 0;
+  $('dtNext').disabled = res.page >= res.pages - 1;
+}
+
+function exportCsv(){
+  const n = BTFULL.detail.length;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([Core.csvDetail(BTFULL.detail)],
+    {type:'text/csv;charset=utf-8'}));
+  a.download = 'ssq-逐期明细-'+ (DATA ? DATA.asofCode : '') +'-'+ n +'期.csv';
+  document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 5000);
+  $('dtInfo').textContent = '已导出 '+fmt(n)+' 期 × '+(8+Core.STRATS.length*8)+' 列';
+}
+
+/* ---------- 奖金规则 ---------- */
+function renderRules(){
+  const C6 = Core.C(Core.NR,6), TOT = C6*Core.NB;
+  const ways = t => { let c=0;
+    for(let m=0;m<=6;m++) for(const b of [0,1]) if(Core.tierOf(m, !!b, t===6)===t) c += Core.C(6,m)*Core.C(27,6-m)*(b?1:15);
+    return c; };
+  const conds = ['6 红 + 蓝球','6 红','5 红 + 蓝球','5 红 或 4 红 + 蓝','4 红 或 3 红 + 蓝',
+                 '2 红 + 蓝 / 1 红 + 蓝 / 只中蓝','生效期：3 红不中蓝'];
+  const rows = Core.TIERS.map((t,i)=>{
+    const cnt = ways(i), pr = cnt/TOT, pcf = pr*100;
+    /* 头几档的概率小到 toFixed 会把它四舍五入成两倍（1/17,721,088 印成 0.00001%），改用两位有效数字 */
+    return {n:t.n, d:conds[i], p:'1 / '+fmt(Math.round(TOT/cnt)),
+      pct:(pcf < 0.001 ? pcf.toPrecision(2) : pcf.toFixed(pr<0.01?5:3))+'%',
+      m: t.fix ? t.fix+' 元' : '浮动', e: (t.fix? t.fix*pr : null), t:i};
+  });
+  const pNo = Core.pAny(false), pFy = Core.pAny(true);
+  $('prizeBox').innerHTML = rows.map(i=>{
+    const ex = DATA.tier[i.t];
+    return '<div class="rrow"><div class="rline"><span class="k">'+i.n+'</span>'
+    + '<span class="v">单注奖金 <b>'+i.m+'</b></span></div>'
+    + '<div class="rline"><span class="v" style="color:var(--dimmer)">'+i.d+'</span></div>'
+    + '<div class="rline"><span class="v">中出概率 '+i.p+'（'+i.pct+'）</span>'
+    + (i.e==null ? '<span class="v">档案里印过 '+wan(ex.min)+' ~ '+wan(ex.max)
+                   +'（最高是第 '+ex.code+' 期，'+ex.n+' 注 × 这个数）</span>'
+                 : '<span class="v">每 2 元的期望返还 <b>'+i.e.toFixed(4)+' 元</b></span>')
+    + '</div></div>';
+  }).join('')
+    + '<div class="rrow"><div class="rline"><span class="k">中任意一档</span>'
+    + '<span class="v">六档时期望 <b>'+pc(pNo)+'（约 1/'+Math.round(1/pNo)+' 注中一注）</b>'
+    +'· 福运奖生效期 <b>'+pc(pFy)+'（约 1/'+Math.round(1/pFy)+'）</b></span></div>'
+    + '<div class="rline"><span class="v" style="color:var(--dimmer)">一二等奖是浮动的：当期奖金扣掉固定奖后按注数平分，'
+    +'2026-02-01 起单期总额分别封顶 1 亿、7,000 万</span></div>'
+    + '<div class="rline"><span class="v" style="color:var(--dimmer)">投注与期次：单注 2 元 · 每周三期（'
+    +CONFIG.drawHH+':'+pad(CONFIG.drawMM)+' 前后公布）· 每年春节停 3–5 期</span></div></div>';
+
+  const fix = Core.eFixed(false), fixFy = Core.eFixed(true);
+  $('fundBox').innerHTML = [
+    {k:'官方实际派奖率', v:DATA.realRate.toFixed(2)+'%', p:DATA.realRate,
+     d:'档案 '+fmt(ROWS.length)+' 期里，'+fmt(DATA.rateNoSales)+' 期没印销售额、'+DATA.rateHoles
+       +' 期缺单注奖金，剩下 '+fmt(DATA.rateN)+' 期：Σ（各奖级注数 × 当期单注奖金）÷ 销售额'},
+    {k:'固定奖那块 · 档案实测', v:DATA.fixedRate.toFixed(2)+'%', p:DATA.fixedRate,
+     d:'三～六等（不含福运奖）按概率算是 '+pc(fix/2)+'（'+fix.toFixed(4)+' 元/注）· 档案里实际派出来是 '
+       +DATA.fixedRate.toFixed(2)+'% —— 两个数差 '+Math.abs(DATA.fixedRate-fix/2*100).toFixed(2)
+       +' 个点。福运奖生效的那 62 期再加 '+(fixFy-fix).toFixed(4)+' 元/注'},
+    {k:'一二等奖那块', v:DATA.floatRate.toFixed(2)+'%', p:DATA.floatRate,
+     d:'占派奖总额的 '+DATA.floatShare.toFixed(1)+'%。这两档其实是同一个红球组合的 '+Core.NB+' 注'
+       +'（一等 1 注 + 二等 '+(Core.NB-1)+' 注），在 '+fmt(TOT)+' 注全集里只占 '+Core.NB+' 注 —— '
+       +'退回的钱有一半挂在这 '+fmt(Core.C(Core.NR,6))+' 分之一上，单注基本摸不到'}
+  ].map(f=> '<div class="rrow"><div class="rhead"><span class="k">'+f.k+'</span><span class="exp">'+f.d+'</span></div>'
+    + '<div class="duo"><span>占 2 元</span><div class="bar" style="--c:var(--gold)"><i style="width:'
+    + Math.min(100, f.p).toFixed(1)+'%"></i></div><span class="exp">'+f.v+'</span></div></div>').join('')
+    + '<div class="rrow"><div class="rline"><span class="k">逐年实际派奖率</span>'
+    + '<span class="v">'+DATA.rateMin.toFixed(1)+'% ~ '+DATA.rateMax.toFixed(1)+'%（'+DATA.rateYears+'）</span></div>'
+    + '<div class="rline"><span class="v" style="color:var(--dimmer)">规则里的计提口径是奖金 51%、公益金 36%、发行费 13%'
+    +'（2026-02-01 起；此前奖金 50%）—— 这一条我没能从开奖档案里验证，是规则文本里的数。'
+    +'这两个数本来也不必相等：没派完的进奖池滚存，所以「实际」总在上面那个区间里晃。</span></div></div>';
+
+  const cap = DATA.cap1, cap2 = DATA.cap2;
+  $('ruleBox').innerHTML = [
+    {k:'新增一档「福运奖」', v:'生效 '+fmt(DATA.fyN)+' 期 · '+fmt(DATA.fyNotes)+' 注',
+     d:'奖池 ≥15 亿时启动，中任意 3 个红球（不中蓝）得 5 元；某期开奖后奖池跌破 3 亿即停发。'
+       +'两头档案里都对得上：启动第一天（'+DATA.fyFirst+' 期）前一天奖池是 '
+       +(DATA.fyStartPool==null?'—':DATA.fyStartPool.toFixed(2)+' 亿')+'，早过 15 亿线；'
+       +'最后一期生效的 '+DATA.fyLast+' 期开完剩 '+DATA.fyEndPool.toFixed(2)
+       +' 亿，于是再下一期就印 0 注。这一档总共派掉 '+wan(DATA.fyPaid)+'。'},
+    {k:'一等奖单期总额封顶 1 亿', v:cap.length+' 期顶到',
+     d:cap.length? '新规后已有 '+cap.length+' 期一等奖总奖金正好压在 1.00 亿：'
+        + cap.map(c=>c.code+' 是 '+c.n+' 注 × '+wan(c.v)).join('，')
+        + ' —— 注数翻倍、单注对半，总额钉在同一个数上。封顶前这一档单期派过 '
+        + wan(Math.max(...ROWS.filter(r=>r.code<'2026014'&&r.prize[0][1]).map(r=>r.prize[0][0]*r.prize[0][1])))+'。'
+        : '新规后还没有一期顶到 1 亿。'},
+    {k:'二等奖单期总额封顶 7,000 万', v:cap2.length+' 期顶到',
+     d:cap2.length? cap2.map(c=>c.code+' 期 '+c.n+' 注 × '+wan(c.v)+'，合计 '+fmt(c.t)+' 元')
+        .join('；')+' —— 差 7,000 万那点子是平分之后抹掉的零头，线就压在这。'
+        : '新规后还没有一期顶到 7,000 万。'},
+    {k:'只在档案里看到的另一条线', v:'单注 '+wan(DATA.newMax1)+' × '+DATA.newMax1N+' 期',
+     d:'新规后一等奖单注最高恰好是 '+fmt(DATA.newMax1)+' 元，已经出现过 '+DATA.newMax1N+' 期，全部是：'
+       +DATA.newMax1Codes.join('、')+'；改规则之前印到过 '+wan(DATA.oldMax1)+'。'
+       +'这条我没能核到对应的规则文本，只当档案里的现象报，不拿它当规矩讲。'},
+    {k:'开奖节拍也改过', v:'2003 年每期少一天',
+     d:'档案里 2003 年只在周四、周日开奖（89 期），2004 年补上周二，2005 年起才固定周日、周二、周四三期（每年 150–154 期）。'
+       +'最长的一次断档是 2020-01-23 → 2020-03-10，连着 21 期没开奖。'}
+  ].map(f=> '<div class="rrow"><div class="rline"><span class="k">'+f.k+'</span>'
+    + (f.v?'<span class="v"><b>'+f.v+'</b></span>':'')+'</div>'
+    + '<div class="rline"><span class="v" style="color:var(--dimmer)">'+f.d+'</span></div></div>').join('');
+
+  $('nuReal').textContent = (DATA.realRate/100*2).toFixed(2)+' 元';
+}
+
+/* ---------- 打赏：一张码，右下角浮标和页脚链接都开它 ---------- */
+function renderDonate(){
+  const u = CONFIG.donate || '#';
+  $('donateBtn').href = u; $('donateLink').href = u;
+  $('donateSlots').innerHTML = CONFIG.donate
+    ? '<img class="modal-img" src="'+CONFIG.donate+'" alt="微信赞赏码">'
+    : '<div class="modal-cap">打赏码暂未上传</div>';
+}
+
+/* ---------- 装载 ---------- */
+/* 官方实际派奖率、封顶那几期、奖金极值：一次算完挂在 DATA 上给渲染用。
+   渲染层只许从这份产物抄数，不许自己写死一个小数。 */
+function deriveDoc(doc){
+  const R = ROWS, NEW = '2026014';          /* 2026-02-01 那次改规则，第一期就是 2026014 */
+  let p=0, s=0, n=0, fl=0, fx=0, noSales=0, holes=0;
+  const byY={};
+  for(const r of R){
+    if(!r.sales){ noSales++; continue; }
+    let hole=false, q=0;
+    for(let i=0;i<7;i++){ if(r.prize[i][0]>0 && r.prize[i][1]===null) hole=true;
+      q += r.prize[i][0]*(r.prize[i][1]||0); }
+    if(hole){ holes++; continue; }           /* 上游漏印奖金的那几期，两边都不计入，不猜 */
+    p+=q; s+=r.sales; n++;
+    fl += r.prize[0][0]*(r.prize[0][1]||0) + r.prize[1][0]*(r.prize[1][1]||0);
+    for(let i=2;i<7;i++) fx += r.prize[i][0]*(r.prize[i][1]||0);
+    const y=r.code.slice(0,4); byY[y]=byY[y]||{p:0,s:0}; byY[y].p+=q; byY[y].s+=r.sales;
+  }
+  const ys=Object.entries(byY).map(([y,v])=>[y, v.p/v.s*100]);
+  doc.rateN=n; doc.realRate=p/s*100; doc.rateNoSales=noSales; doc.rateHoles=holes;
+  doc.rateMin=Math.min(...ys.map(v=>v[1])); doc.rateMax=Math.max(...ys.map(v=>v[1]));
+  doc.rateYears=ys[0][0]+'–'+ys[ys.length-1][0];
+  doc.floatShare=fl/p*100;                   /* 一二等奖占「派出去的奖」的多大一块 */
+  doc.floatRate=fl/s*100;                    /* 折算到销售额上是多少个点 */
+  doc.fixedRate=fx/s*100;                    /* 实测的固定奖那一块；两条加起来正好等于实际派奖率 */
+
+  /* 每档单注奖金在档案里真实印过的区间（浮动的一二等奖要用它，固定奖四档用面值） */
+  doc.tier = [0,1,2,3,4,5,6].map(i=>{
+    const v = R.filter(r=>r.prize[i][1]!==null);
+    if(!v.length) return null;
+    const mx = Math.max(...v.map(r=>r.prize[i][1]));
+    const at = v.find(r=>r.prize[i][1]===mx);
+    return {min:Math.min(...v.map(r=>r.prize[i][1])), max:mx, code:at.code, n:at.prize[i][0]};
+  });
+  const tot = (r,i)=> r.prize[i][0]>0 && r.prize[i][1] ? r.prize[i][0]*r.prize[i][1] : 0;
+  doc.cap1 = R.filter(r=>r.code>=NEW && tot(r,0) >= 1e8-1)
+              .map(r=>({code:r.code, n:r.prize[0][0], v:r.prize[0][1], t:tot(r,0)}));
+  doc.cap2 = R.filter(r=>r.code>=NEW && tot(r,1) >= 7e7-1000)
+              .map(r=>({code:r.code, n:r.prize[1][0], v:r.prize[1][1], t:tot(r,1)}));
+  const nw = R.filter(r=>r.code>=NEW && r.prize[0][1]);
+  doc.newMax1 = Math.max(...nw.map(r=>r.prize[0][1]));
+  doc.newMax1N = nw.filter(r=>r.prize[0][1]===doc.newMax1).length;
+  doc.newMax1Codes = nw.filter(r=>r.prize[0][1]===doc.newMax1).map(r=>r.code);
+  doc.oldMax1 = Math.max(...R.filter(r=>r.code<NEW && r.prize[0][1]).map(r=>r.prize[0][1]));
+
+  const fy=R.filter(r=>r.fy);
+  doc.fyN=fy.length; doc.fyFirst=fy[0].code; doc.fyLast=fy[fy.length-1].code;
+  doc.fyNotes=fy.reduce((a,r)=>a+r.prize[6][0],0);
+  doc.fyPaid=fy.reduce((a,r)=>a+r.prize[6][0]*(r.prize[6][1]||0),0);
+  doc.fyEndPool = fy[fy.length-1].pool/1e8;
+  const before = R[R.findIndex(r=>r.code===doc.fyFirst)-1];
+  doc.fyStartPool = before ? before.pool/1e8 : null;
+  doc.poolMax = Math.max(...R.filter(r=>r.pool).map(r=>r.pool))/1e8;
+  return doc;
+}
+
+async function load(first){
+  const btn=$('refreshBtn'); btn.disabled=true;
+  btn.innerHTML='<span class="spin"></span> 读取中';
+  try{
+    const res = await fetch(CONFIG.dataFile+(first?'':'?cb='+Date.now()), {cache:'no-store'});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const doc = await res.json();
+    if(!doc || !Array.isArray(doc.draws) || !doc.draws.length) throw new Error('empty');
+    DATA=doc; ROWS=Core.parse(doc.draws);
+    const t0 = performance.now();
+    BTFULL = Core.backtest(ROWS, 60);
+    BT365 = btView(365);
+    deriveDoc(doc);
+    const ms = Math.round(performance.now()-t0);
+
+    renderHero(doc); renderDonate(); renderPlans();
+    heatChart(0); missChart(); mixChart('sum'); repeatChart(); ratioChart();
+    btChart(0); detailTable(); renderRules();
+    tickCountdown();
+    navPad();
+    $('stamp').textContent += ' · 页面现算 '+fmt(ms)+' ms';
+    /* 带 #锚点 进来时档案还没到手，页面是个空壳，浏览器那一下跳转会落在错位置
+       ⇒ 表格真正撑开之后再对齐一次。这一下不做滑动（临时把 smooth 关掉）：
+       人家的意图是「直接到这一段」，不是看一段滚动动画。 */
+    if(first && location.hash){
+      const t = document.getElementById(decodeURIComponent(location.hash.slice(1)));
+      if(t && t.classList.contains('nav-t')){
+        const root = document.documentElement, sb = root.style.scrollBehavior;
+        root.style.scrollBehavior = 'auto'; t.scrollIntoView(); root.style.scrollBehavior = sb;
+      }
+    }
+    markNav(); /* 内容撑开之后各段位置变了，高亮跟着重算一次 */
+    if(!hasChart) ['Heat','Miss','Mix','Repeat','Bt','BtBlue','BtLine'].forEach(id=>chartEmpty(id,'图表库没加载出来 · 数字照常可读'));
+  }catch(err){
+    $('hpState').textContent = '暂时读不到开奖档案，稍后再刷新试试。';
+    $('stamp').textContent = '读取失败：'+(err && err.message || err);
+  }finally{
+    btn.disabled=false; btn.textContent='重新读取开奖档案';
+  }
+}
+
+$('refreshBtn').addEventListener('click', ()=>load(false));
+$('heatTabs').addEventListener('click', e=>{
+  const b=e.target.closest('.tab'); if(!b) return;
+  [...$('heatTabs').children].forEach(x=>x.classList.toggle('on', x===b));
+  heatChart(+b.dataset.w);
+});
+$('mixTabs').addEventListener('click', e=>{
+  const b=e.target.closest('.tab'); if(!b) return;
+  [...$('mixTabs').children].forEach(x=>x.classList.toggle('on', x===b));
+  mixChart(b.dataset.v);
+});
+$('btTabs').addEventListener('click', e=>{
+  const b=e.target.closest('.tab'); if(!b) return;
+  [...$('btTabs').children].forEach(x=>x.classList.toggle('on', x===b));
+  btChart(+b.dataset.n);
+});
+$('dtQ').addEventListener('input', e=>{ DT.q=e.target.value; DT.page=0; detailTable(); });
+$('dtSize').addEventListener('click', e=>{
+  const b=e.target.closest('.sg'); if(!b) return;
+  [...$('dtSize').querySelectorAll('.sg')].forEach(x=>x.classList.toggle('on', x===b));
+  DT.size=+b.dataset.n; DT.page=0; detailTable();
+});
+$('dtPrev').addEventListener('click', ()=>{ DT.page--; detailTable(); });
+$('dtNext').addEventListener('click', ()=>{ DT.page++; detailTable(); });
+$('dtCsv').addEventListener('click', exportCsv);
+const dm=$('donateModal');
+function donateOpen(e){ if(e) e.preventDefault(); dm.classList.add('open'); }
+$('donateBtn').addEventListener('click', donateOpen);
+$('donateLink').addEventListener('click', donateOpen);
+$('donateClose').addEventListener('click', ()=> dm.classList.remove('open'));
+dm.addEventListener('click', e=>{ if(e.target===dm) dm.classList.remove('open'); });
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') dm.classList.remove('open'); });
+
+/* 高亮取「最后滚过那条线的一段」，不用 IntersectionObserver：锚点是一行高的标题，
+   快速滚动时观察带会整段漏掉，高亮就停在上一格不动。 */
+const navLinks=[...$('topnav').querySelectorAll('a')];
+let navRaf=0;
+/* 窄屏上五个点会折成两行（3D 那页 330px 实测 46→83 高）⇒ 落点留白按导航条真实高度给，不写死 */
+function navPad(){ document.documentElement.style.setProperty('--navh', ($('topnav').offsetHeight+26)+'px'); }
+addEventListener('resize', navPad);
+function markNav(){
+  navRaf=0;
+  const line = $('topnav').getBoundingClientRect().bottom + 12;
+  let cur=navLinks[0];
+  for(const a of navLinks){
+    const t=document.getElementById(a.hash.slice(1));
+    if(t && t.getBoundingClientRect().top<=line) cur=a;
+  }
+  navLinks.forEach(a=>a.classList.toggle('on', a===cur));
+}
+addEventListener('scroll', ()=>{ if(!navRaf) navRaf=requestAnimationFrame(markNav); }, {passive:true});
+navPad();
+markNav();
+
+load(true);
+</script>
+</body>
+</html>
