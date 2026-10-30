@@ -203,6 +203,9 @@ td .b2{display:inline-grid}
 .dt-bar .btn{padding:8px 14px;font-size:.78rem;border-radius:10px;font-weight:500;letter-spacing:0;
   background:var(--glass);border-color:var(--line);color:var(--dim)}
 .dt-bar .btn:hover{transform:none;box-shadow:none;border-color:rgba(255,200,97,.55);color:var(--txt)}
+/* 筛选按钮按下去常亮：它和「上一页」长得一样，不亮就分不出现在看的是全档案还是筛过的 */
+.dt-bar .btn.on{background:rgba(255,200,97,.16);border-color:rgba(255,200,97,.62);color:var(--gold);font-weight:600}
+.dt-bar .btn.on:hover{color:var(--gold)}
 .inp{background:var(--glass);border:1px solid var(--line);border-radius:10px;color:var(--txt);
   padding:8px 12px;font-size:.79rem;font-family:inherit;min-width:224px;max-width:100%}
 .inp:focus{outline:none;border-color:rgba(255,200,97,.55)}
@@ -411,9 +414,11 @@ footer a:hover{filter:brightness(1.14);transform:translateY(-1px)}
       <div class="p-head"><div class="p-title"><i></i>逐期明细</div></div>
       <div class="p-note">每格三行：第一行是这套策略的 10 码红池（金色 = 这期真开出来了），第二行是「池里撞进几个红球、蓝球中没中」，
         下面五行是它在<b>开奖之前</b>押的 5 注，每注末尾标它撞到了哪一档、当期实际单注多少钱 · 最后一列汇总哪套押到了 200 元及以上
-        · 默认最近 10 期，输期号（如 2026124）或号码（如 0311）只列匹配的行 · 表格比屏幕宽，左右拖动看全</div>
+        · 默认最近 10 期，输期号（如 2026124）或号码（如 0311）只列匹配的行 · 「只看押到 200 元及以上」把整张表筛到至少一套押中 200 元以上的期
+        · 表格比屏幕宽，左右拖动看全</div>
       <div class="dt-bar">
         <input class="inp" id="dtQ" type="search" placeholder="搜期号或号码，如 2026124 或 0311" autocomplete="off" aria-label="搜期号或号码">
+        <button class="btn" id="dtOnly" type="button" aria-pressed="false" title="只列至少有一套策略押到 200 元及以上奖级的期">只看押到 200 元及以上</button>
         <span class="seg" id="dtSize" role="group" aria-label="每页期数">
           <span class="sg-lab">每页</span>
           <button class="sg on" data-n="10" type="button">10 期</button>
@@ -1353,17 +1358,24 @@ function btChart(n){
     +' —— 这就是「官方退一半、你拿不回一半」的全部原因。';
 }
 
-/* ---------- 逐期明细：搜索 + 每页 N 期 + 翻页 ---------- */
-const DT = {q:'', page:0, size:10};
+/* ---------- 逐期明细：搜索 + 只看大奖 + 每页 N 期 + 翻页 ---------- */
+const DT = {q:'', page:0, size:10, only:false};
+
+/* 「押到 200 元及以上」= 某一套策略的最高奖级落在 0~3 档（一二等 / 3000 / 200）。
+   末列汇总和列表筛选共用这一只判据，免得两处口径哪天走岔。 */
+const bigTier = t => t>=0 && t<=3;
+function bigHit(r){ return Core.STRATS.some(s=> bigTier(r.best[s.k])); }
 
 function detailTable(){
-  const res = Core.pageDetail(BTFULL.detail, DT.q, DT.page, DT.size);
+  const src = DT.only ? BTFULL.detail.filter(bigHit) : BTFULL.detail;
+  const res = Core.pageDetail(src, DT.q, DT.page, DT.size);
   DT.page = res.page;
   $('btHead').innerHTML = '<th>期号</th><th>开奖号码</th><th>和值 · 奇偶</th>'
     + Core.STRATS.map(s=>'<th>'+s.n+'</th>').join('') + '<th>押到 200 元及以上的</th>';
   if(!res.rows.length){
-    $('btBody').innerHTML = '<tr><td colspan="'+(4+Core.STRATS.length)+'" class="dt-none">没有期号或号码里含「'
-      + esc(DT.q)+'」的记录</td></tr>';
+    const why = DT.q ? '没有期号或号码里含「'+esc(DT.q)+'」的记录'
+                     : (DT.only ? '全档案里没有押到 200 元及以上的期' : '档案里还没有可列出的期');
+    $('btBody').innerHTML = '<tr><td colspan="'+(4+Core.STRATS.length)+'" class="dt-none">'+why+'</td></tr>';
   } else {
     $('btBody').innerHTML = res.rows.map(r=>{
       const mark = {red:new Set(r.red), blue:r.blue};
@@ -1371,7 +1383,7 @@ function detailTable(){
         + '<div class="mk '+(r.hit[s.k]>=4?'y':'n')+'">红 '+r.hit[s.k]+' 个 · '+(r.bhit[s.k]?'蓝中':'蓝空')+'</div>'
         + ticketLines(r.tk[s.k], mark)
         + '<div class="pooln">'+(r.pay[s.k]>0?'当期返奖 <b>'+fmt(r.pay[s.k])+' 元</b>':'返奖 0 元')+'</div></td>').join('');
-      const who = Core.STRATS.filter(s=>r.best[s.k]>=0 && r.best[s.k]<=3).map(s=>s.n+' '+Core.TIERS[r.best[s.k]].n);
+      const who = Core.STRATS.filter(s=> bigTier(r.best[s.k])).map(s=>s.n+' '+Core.TIERS[r.best[s.k]].n);
       return '<tr><td class="num">'+r.code+'<div style="color:var(--dimmer);font-size:.7rem">'+r.date.slice(5)+' '+r.week+'</div></td>'
         + '<td>'+redBalls(r.red, r.blue)+'</td>'
         + '<td class="num">'+r.s+'<div style="color:var(--dimmer);font-size:.7rem">'+r.odd+'奇'+(6-r.odd)+'偶'
@@ -1380,9 +1392,11 @@ function detailTable(){
         + '<td class="mk '+(who.length?'y':'n')+'">'+(who.length?who.join('<br>'):'—')+'</td></tr>';
     }).join('');
   }
-  $('dtInfo').textContent = '共 '+fmt(res.total)+' 期'
-    + (DT.q ? '（匹配「'+DT.q+'」）' : '（全档案，从新到旧）')
-    + ' · 第 '+(res.page+1)+' / '+res.pages+' 页';
+  const bits = [];
+  if(DT.only) bits.push('只看押到 200 元及以上');
+  if(DT.q) bits.push('匹配「'+DT.q+'」');
+  if(!bits.length) bits.push('全档案，从新到旧');
+  $('dtInfo').textContent = '共 '+fmt(res.total)+' 期（'+bits.join(' · ')+'） · 第 '+(res.page+1)+' / '+res.pages+' 页';
   $('dtPrev').disabled = res.page <= 0;
   $('dtNext').disabled = res.page >= res.pages - 1;
 }
@@ -1610,6 +1624,12 @@ $('btTabs').addEventListener('click', e=>{
   btChart(+b.dataset.n);
 });
 $('dtQ').addEventListener('input', e=>{ DT.q=e.target.value; DT.page=0; detailTable(); });
+$('dtOnly').addEventListener('click', e=>{
+  DT.only = !DT.only; DT.page = 0;
+  e.currentTarget.classList.toggle('on', DT.only);
+  e.currentTarget.setAttribute('aria-pressed', DT.only ? 'true' : 'false');
+  detailTable();
+});
 $('dtSize').addEventListener('click', e=>{
   const b=e.target.closest('.sg'); if(!b) return;
   [...$('dtSize').querySelectorAll('.sg')].forEach(x=>x.classList.toggle('on', x===b));
