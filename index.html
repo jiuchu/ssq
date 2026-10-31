@@ -410,6 +410,17 @@ footer a:hover{filter:brightness(1.14);transform:translateY(-1px)}
         <th>最高档</th><th>投入</th><th>返奖</th><th>净盈亏</th><th>返还率</th>
       </tr></thead><tbody id="btMoney"></tbody></table></div>
     </div>
+    <div class="panel wide">
+      <div class="p-head"><div class="p-title"><i></i>池子逮住全部 6 个红球的那几期</div></div>
+      <div class="p-note">10 码红池撞全 6 个红球的概率是 210 / 1,107,568 ≈ 1/5,274，翻完全部回测本来就只会撞上几次 ·
+        这一栏列的是真撞上的那些期，以及<b>为什么还是没有二等奖</b>：每期只从池子里挑 5 注，就算 6 个红球全在池里，
+        5 注恰好押中真正那 6 个红球的概率也只有 5/210，再乘上蓝球错的 15/16 —— 卡住的不是「算法不够厉害」，是注数</div>
+      <div class="scroll-x"><table class="money"><thead><tr>
+        <th class="l">期号</th><th class="l">日期</th><th class="l">哪套池子</th><th class="l">当期开奖号码</th>
+        <th>当期二等奖单注</th><th>蓝球</th><th>5 注实际拿到</th><th>把 10 码池买满（840 注）</th>
+      </tr></thead><tbody id="nmBody"></tbody></table></div>
+      <div class="p-note" id="nmSum">—</div>
+    </div>
     <div class="panel wide nav-t" id="sec-detail">
       <div class="p-head"><div class="p-title"><i></i>逐期明细</div></div>
       <div class="p-note">每格三行：第一行是这套策略的 10 码红池（金色 = 这期真开出来了），第二行是「池里撞进几个红球、蓝球中没中」，
@@ -1566,6 +1577,48 @@ function deriveDoc(doc){
   return doc;
 }
 
+/* ---------- 池子逮住全部 6 个红球的时刻：为什么仍然不是二等奖 ---------- */
+function renderNearMiss(){
+  const byCode = new Map(ROWS.map(r=>[r.code,r]));
+  const ev = [];
+  for(const r of BTFULL.detail)
+    for(const s of Core.STRATS)
+      if(r.hit[s.k]===6) ev.push({r,s});
+  const per = BTFULL.detail.length * Core.STRATS.length;
+  const C6 = Core.C(Core.NR,6), pPool = Core.C(Core.RP,6)/C6;
+  const expPool = per*pPool, sd = Math.sqrt(expPool*(1-pPool)), z = (ev.length-expPool)/sd;
+  const p2 = (15/16)/C6;
+  const exp2one = BTFULL.detail.length*Core.NT*p2, exp2all = per*Core.NT*p2;
+  const byStrat = Core.STRATS.map(s=> s.n+' '+ev.filter(e=>e.s.k===s.k).length).join(' · ');
+
+  $('nmBody').innerHTML = ev.map(({r,s})=>{
+    const amt2 = byCode.get(r.code).prize[1][1];
+    const win = r.best[s.k]>=0 ? Core.TIERS[r.best[s.k]].n+' · '+fmt(r.pay[s.k])+' 元' : '没中';
+    const whole = r.bhit[s.k]
+      ? '1 注一等奖 + 3 注二等奖'+(amt2!=null ? ' · 二等奖合计 '+fmt(amt2*3)+' 元' : '')
+      : '4 注二等奖'+(amt2!=null ? ' · 合计 '+fmt(amt2*4)+' 元' : ' · 单注奖金档案未印');
+    return '<tr><td class="l">'+r.code+'</td><td class="l">'+r.date+'</td>'
+      +'<td class="l"><span class="pill"><b class="b2" style="background:'+s.c+';color:#0b0f18;border-radius:8px;width:22px">'
+      + s.n.slice(0,1)+'</b>'+s.n+'</span></td>'
+      +'<td class="l num">'+r.red.map(Core.pad2).join(' ')+' <b style="color:var(--gold)">+ '+Core.pad2(r.blue)+'</b></td>'
+      +'<td class="num">'+(amt2!=null ? fmt(amt2)+' 元' : '档案未印')+'</td>'
+      +'<td class="num">'+Core.pad2(r.blue)
+      +' <span style="color:var(--dimmer)">'+(r.bhit[s.k]?'在池':'不在池')+'</span></td>'
+      +'<td class="num">'+win+'</td><td class="num">'+whole+'</td></tr>';
+  }).join('');
+
+  $('nmSum').innerHTML = '回测 '+fmt(BTFULL.detail.length)+' 期 × '+Core.STRATS.length+' 套 = <b>'+fmt(per)+'</b> 次池子：'
+    +'纯运气该撞全 6 红 <b>'+expPool.toFixed(2)+'</b> 次，实际 <b>'+ev.length+'</b> 次（'+byStrat+'），'
+    +(Math.abs(z)<1.96 ? '在 ±1.96σ（±'+(1.96*sd).toFixed(1)+' 次）以内，属于正常波动'
+                        : '越过了 ±1.96σ（±'+(1.96*sd).toFixed(1)+' 次）')
+    +' —— 按池子算，这 '+ev.length+' 次就是「二等奖级的红球覆盖」，只是 5 注没押到那一组。'
+    +'<br>但每套每期只押 '+Core.NT+' 注：'+fmt(BTFULL.detail.length)+' 期里撞上二等奖的期望只有 <b>'+exp2one.toFixed(3)+'</b> 次（约 '+pc(exp2one,1)+'），'
+    +'五套加起来才 <b>'+exp2all.toFixed(3)+'</b> 次（约 '+pc(exp2all,1)+'）—— '
+    +'要「历史里至少一套有过二等奖」，得同时摆出约 '+Math.ceil(1/exp2one)+' 套才够 1 次期望（还不是保证），再挑中撞上的那一套 —— 那是事后挑运气，不是算法厉害。'
+    +'<br>右边「买满」是 10 码 × 4 蓝 = 840 注全买（1,680 元/期/套，是现在 10 元的 168 倍），'
+    +'整段回测都这么买要 '+wan(1680*BTFULL.detail.length)+'/套，返奖率仍是官方那 '+DATA.realRate.toFixed(2)+'%，不是赚钱的办法。';
+}
+
 async function load(first){
   const btn=$('refreshBtn'); btn.disabled=true;
   btn.innerHTML='<span class="spin"></span> 读取中';
@@ -1583,7 +1636,7 @@ async function load(first){
 
     renderHero(doc); renderDonate(); renderPlans();
     heatChart(0); missChart(); mixChart('sum'); repeatChart(); ratioChart();
-    btChart(0); detailTable(); renderRules();
+    btChart(0); detailTable(); renderRules(); renderNearMiss();
     tickCountdown();
     navPad();
     $('stamp').textContent += ' · 页面现算 '+fmt(ms)+' ms';
