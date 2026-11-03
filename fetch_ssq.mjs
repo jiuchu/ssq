@@ -50,6 +50,56 @@ function num(raw) {
   return Number.isFinite(n) ? n : NaN;
 }
 
+/* 钱那 16 列（销售额、奖池、一至六等 + 福运的注数和奖金）上游是**晚填**的：
+   开奖当晚先出号码，那 16 列回一串「-」，隔一阵才回填。
+   实测 2026-11-03：21:15 官方开 2026126，17500 那份 txt 22:00:03 才重新生成
+   （Last-Modified 为证），那一行就是 `... 09 10 13 29 32 22 - - - - - - - - - - - - - - - -`
+   —— 号码 15 列全好，钱 16 列全空。
+   旧那一版只认「整数」，`Number('−')` 得 NaN ⇒ 整行丢掉 ⇒ 这一期在档案里根本不存在，
+   页面于是还在给一个已经开完的期号做「本期推荐」。现在分三种形状：
+     「-」／「—」／空  = 还没填 ⇒ 落成 null，行留下
+     0                = 真的空开（那一档没人中）⇒ 注数留 0；奖金那格的 0 落成 null
+     别的非数字        = 上游改版或串行 ⇒ 判脏，整行丢掉（和旧版同一判据，这条警报不许丢） */
+function unfilled(s) {
+  const v = String(s).trim();
+  return v === '-' || v === '—' || v === '';
+}
+function cntCol(raw) {                       /* 注数：没填 → null，脏 → NaN */
+  if (unfilled(raw)) return null;
+  const n = num(raw);
+  return Number.isInteger(n) && n >= 0 ? n : NaN;
+}
+function amtCol(raw) {                       /* 奖金／销售额／奖池：没填或 0 → null，脏 → NaN */
+  if (unfilled(raw)) return null;
+  const n = num(raw);
+  if (!Number.isFinite(n)) return NaN;
+  return n > 0 ? n : null;
+}
+/* 一期的钱填没填，只看这一串指纹：号码不在里面（那是 fixes 的活） */
+function moneySig(d) {
+  return [d.sales, d.pool].map(v => (v == null ? '-' : v)).join(',')
+    + '|' + (d.prize || []).map(p => (p[0] == null ? '-' : p[0]) + ':' + (p[1] == null ? '-' : p[1])).join(',');
+}
+function tailSig(rows) {
+  return (rows || []).slice(-6).map(moneySig).join(';');
+}
+/* 「这一轮到底要不要写盘」：新期号、条数变了、有人改号、或者尾部那几期的钱从「-」变成实数。
+   抽成函数是因为 11-03 那一版只认前三样 —— 钱回填它不认，那期的销量／奖池要一直空到下期开奖。
+   只比尾部 6 期：上游回填的就是最近那几期，全档案比一遍是白烧 CPU。 */
+function changed(old, rows, fixes) {
+  if (!old || !Array.isArray(old.draws) || !old.draws.length) return true;
+  if (rows.length !== old.draws.length) return true;
+  if (old.asofCode !== rows[rows.length - 1].code) return true;
+  if (fixes.length) return true;
+  return tailSig(old.draws) !== tailSig(rows);
+}
+/* 最新那一期的钱填没填。工作流那道闸门认的是同一句话（ssq-data.yml 里 pend= 那一行），
+   两处要改一起改：号码落了档、钱还空着 ⇒ 下一格还得去敲上游，否则这 16 列要空到下期开奖。 */
+function pendingMoney(d) {
+  if (!d) return false;
+  return d.sales == null || d.pool == null || (d.prize || []).some(p => p[0] === null);
+}
+
 /**
  * 一行 = 31 列：
  *   [0] 期号  [1] 开奖日期  [2..7] 红球（已升序）  [8] 蓝球
@@ -82,16 +132,18 @@ function parseTxt(text) {
     const order = t.slice(9, 15).map(n => num(n));
     if (order.slice().sort((a, b) => a - b).join() !== red.join()) { bad++; continue; }
 
-    const sales = num(t[15]) || null;
-    const pool = num(t[16]) || null;
+    const sales = amtCol(t[15]);
+    const pool = amtCol(t[16]);
+    if (Number.isNaN(sales) || Number.isNaN(pool)) { bad++; continue; }
     const prize = [];
     let broken = false;
     for (let i = 0; i < 7; i++) {
-      const n = num(t[17 + i * 2]);
-      const v = num(t[18 + i * 2]);
-      if (!Number.isInteger(n) || n < 0) { broken = true; break; }
-      /* 奖金列 0 有两种：注数本来就是 0（空开，真），或注数 > 0 却没印奖金（上游漏，假） */
-      prize.push([n, v > 0 ? v : null]);
+      const n = cntCol(t[17 + i * 2]);
+      const v = amtCol(t[18 + i * 2]);
+      if (Number.isNaN(n) || Number.isNaN(v)) { broken = true; break; }
+      /* 奖金列 0 有两种：注数本来就是 0（空开，真），或注数 > 0 却没印奖金（上游漏，假）
+         —— 两种都落成 null，靠注数那一格分辨，页面自己判 */
+      prize.push([n, v]);
     }
     if (broken) { bad++; continue; }
     out.push({ code: t[0], date, week: weekOf(date), red, blue, sales, pool, prize });
@@ -178,10 +230,11 @@ async function main() {
   }
 
   /* 周一、三、五不开奖，闹钟每半小时一格的其中一大半回来都是「最新期号和文件里一样」。
-     这时候只有 fetchedAt 会变 —— 照写就是每周五六条空提交。所以没新期号、条数没变、
-     没人改号，就一个字节都不动。条数必须一起比：上游回填旧年份时最新期号不动但档案变长。 */
-  if (old && old.asofCode === newest.code && rows.length === oldCount && !fixes.length && !FORCE) {
-    console.log('[=] 最新仍是 ' + newest.code + '（' + newest.date + '），上游没有新期号，文件不动');
+     这时候只有 fetchedAt 会变 —— 照写就是每周五六条空提交。所以判据全在 changed() 里：
+     期号、条数、改号、尾部那几期的钱（「-」→实数）四样都没动，才一个字节不写。
+     条数必须一起比：上游回填旧年份时最新期号不动但档案变长。 */
+  if (!FORCE && !changed(old, rows, fixes)) {
+    console.log('[=] 最新仍是 ' + newest.code + '（' + newest.date + '），期号、条数、钱都没变，文件不动');
     return;
   }
 
@@ -204,6 +257,7 @@ async function main() {
     + '，红' + newest.red.join(',') + ' 蓝' + newest.blue + '）源=' + doc.source
     + (p.bad ? '，丢弃异常行 ' + p.bad + ' 条' : '')
     + (fixes.length ? '，改号/改值 ' + fixes.length + ' 条' : '')
+    + (pendingMoney(newest) ? '，最新这期的销售额/奖池/各档奖金上游还没填（页面那几格显示「—」，回填了自己会写盘）' : '')
     + ' 已写入 ' + target + '（' + fs.statSync(target).size + ' B）');
 }
 

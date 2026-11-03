@@ -970,11 +970,15 @@ function renderHero(doc){
 /* 福运奖那两档门槛是能从档案里读出来的：生效期有注数，停发期注数为 0 */
 function fyBadge(r){
   const lim15 = 15e8, lim3 = 3e8;
+  /* 奖池那一格上游是晚填的（开奖当晚先出号码、钱隔一阵才回填）⇒ 不知道就说不知道。
+     旧那一版下面那句拿 (lim15 - (r.pool||0)) 算，奖池空着时印出来是「还差 15.00 亿」
+     —— 把「没数」当成了「0 亿」，是个假数。 */
+  if(r.pool==null) return '福运奖 · 这期的奖池上游还没填';
   if(r.fy) return '<b>福运奖生效中</b> · 本期开出 ' + fmt(r.prize[6][0]) + ' 注 × 5 元';
   const miss = (lim15 - (r.pool||0))/1e8;
-  if(r.pool!=null && r.pool>=lim15)
+  if(r.pool>=lim15)
     return '<b>福运奖待启动</b> · 奖池 ' + (r.pool/1e8).toFixed(2) + ' 亿已过 15 亿线，按规则下一期起生效';
-  return '福运奖停发 · 奖池 ' + (r.pool==null?'—':(r.pool/1e8).toFixed(2)+' 亿')
+  return '福运奖停发 · 奖池 ' + (r.pool/1e8).toFixed(2) + ' 亿'
     + ' · 距 15 亿启动线还差 ' + miss.toFixed(2) + ' 亿';
 }
 
