@@ -10,6 +10,9 @@
 #   没配官方备胎：cwl 那个接口对机房 IP 一律 403（2026-10-30 在 3D 上实测过三轮），
 #   从家里敲它又有被拦掉整个浏览器会话的风险。所以这一条是单源 —— 主源挂了就不写盘、
 #   档案停在原地，宁可旧，不可假。
+#   ⚠ 但「旧」和「缺一半」是两回事：这家源开奖当晚先出号码、销售额/奖池/各档奖金隔一阵
+#   才回填（2026-11-03 实测：21:15 官方开奖，文件 22:00:03 重新生成，那一行的钱 16 列全是
+#   「-」）。所以档案里最新一期允许钱是空的 —— 页面那几格显示「—」，回填了下一格自己写盘。
 #
 # 前置（一次性）：
 #   1. Settings → Pages → Build and deployment → Source = Deploy from a branch，
@@ -22,7 +25,8 @@
 #
 # 节拍不在这里，在 Cloudflare Worker 的 Settings → Triggers 页上（cron 是 UTC）。
 # 这条挂在他那条「全天每半小时」的闹钟上，一天敲 48 次；48 格里真正去上游取数的
-# 只有开奖日北京 21:25 之后那几格（双色球每周二、四、日 21:15 开奖）。
+# 只有开奖日北京 21:25 之后那几格（双色球每周二、四、日 21:15 开奖），
+# 外加「最新那期的钱还没填齐」那几格（一天最多 48 发、每发一个 GET，3 天为限）。
 # 其余每一轮由「要不要跑」挡在 checkout 之后、抓数据之前，十几秒就结束 ——
 # 不发请求、不改文件、不触发 Pages 重建。
 #
@@ -39,7 +43,7 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: 勾上＝四道闸都不看，现在就去上游取一次数（用来验这台机器能不能拿到）
+        description: 勾上＝五道闸都不看，现在就去上游取一次数（用来验这台机器能不能拿到）
         type: boolean
         default: false
 
@@ -64,12 +68,17 @@ jobs:
         with:
           node-version: '22'
 
-      # 四道闸，任一道命中就不去碰上游：
-      #   ① 今天不是开奖日（周二 2 / 周四 4 / 周日 7）→ 上游根本不会出新号；
-      #   ② 现在还没到北京 21:25 → 21:15 公布，早去了只能取到上一期；
-      #   ③ 档案里 asof 已经是今天 → 今天的号已经拿到了；
-      #   ④ 距上一条 run 不足 GAP 分钟 → 防手点，手点十次就是十次真请求。
-      # 手点时勾上 force 这四道一起让开 —— 存在的理由只有一个：白天也能发一发真请求，
+      # 五道闸，任一道命中就不去碰上游：
+      #   ① 距上一条 run 不足 GAP 分钟 → 防手点，手点十次就是十次真请求；
+      #   ② 最新那期的钱还没填齐（销售额／奖池／各档奖金在源里是「-」）→ 这一格照样去补。
+      #      排在③⑤前面是有原因的：号码一落档，asof 就变成今天，旧那一版会被⑤那条
+      #      「今天的号已经在档案里」一直挡死，那 16 列要空到下期开奖才补得上。
+      #      ⚠ 判据和 fetch_ssq.mjs 里的 pendingMoney() 是同一句话，两处要改一起改。
+      #      ⚠ 只管最近 3 天：上游要是一直不填，别让看板每半小时白敲一次 500 KB。
+      #   ③ 今天不是开奖日（周二 2 / 周四 4 / 周日 7）→ 上游根本不会出新号；
+      #   ④ 现在还没到北京 21:25 → 21:15 公布，早去了只能取到上一期；
+      #   ⑤ 档案里 asof 已经是今天 → 今天的号已经拿到了、钱也齐了。
+      # 手点时勾上 force 这几道一起让开 —— 存在的理由只有一个：白天也能发一发真请求，
       # 用来判「这台 runner 到 17500 通不通」。不勾就是普通手点，照样被挡。
       # 21:25 这个点是故意留 10 分钟余量的：官方偶尔拖到 21:20 以后。
       # 取晚了不要紧，后面 22:10 那格自己会补上。
@@ -83,6 +92,8 @@ jobs:
           today=$(TZ=Asia/Shanghai date +%F)
           dow=$(TZ=Asia/Shanghai date +%u)          # 1=周一 … 7=周日
           have=$(node -p "try{JSON.parse(require('fs').readFileSync('$SSQ_OUT','utf8')).asof}catch(e){''}")
+          # 最新那期的钱填没填：和 fetch_ssq.mjs 里 pendingMoney() 同一句话，别改走样
+          pend=$(node -p "try{const j=JSON.parse(require('fs').readFileSync('$SSQ_OUT','utf8'));const d=(j.draws||[]).slice(-1)[0];const age=(Date.now()-Date.parse(d.date+'T12:00:00+08:00'))/864e5;d&&age<3&&(d.sales==null||d.pool==null||(d.prize||[]).some(p=>p[0]===null))?1:0}catch(e){0}")
           # 10# 是必需的：date +%H%M 给 0830、0915 这种带零开头的串，
           # 直接拿去比 -lt 会被 test 当八进制（8 不是八进制数字）而报「不是整数」。
           hm=$((10#$(TZ=Asia/Shanghai date +%H%M)))
@@ -95,17 +106,19 @@ jobs:
           # API 没答话（权限没给、网络抖）就当没有上一条：护栏失效但抓取照跑。
           # 反过来 fail-closed 的话，一次 curl 抖动能让看板连着几天不出新号。
           case "$since" in ''|*[!0-9]*) since=9999 ;; esac
-          echo "档案里 asof=$have（今天 $today，周 $dow）· 现在北京 $disp · 距上一条 run $since 分钟（下限 $GAP）"
+          echo "档案里 asof=$have（今天 $today，周 $dow）· 最新那期的钱没填齐=$pend · 现在北京 $disp · 距上一条 run $since 分钟（下限 $GAP）"
           if [ "$FORCE" = "true" ]; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"; echo "手动放行：四道闸这一格都不看，直接去敲一次"
+            echo "skip=false" >> "$GITHUB_OUTPUT"; echo "手动放行：这几道闸这一格都不看，直接去敲一次"
+          elif [ "$since" -lt "$GAP" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"; echo "距上一条不足 $GAP 分钟，这发不重敲"
+          elif [ "$pend" = "1" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"; echo "最新那期的销售额/奖池/各档奖金还没填齐，这一格去补"
           elif [ "$dow" != 2 ] && [ "$dow" != 4 ] && [ "$dow" != 7 ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"; echo "今天不开奖（只在周二、四、日），这一格不去取数"
           elif [ "$hm" -lt 2125 ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"; echo "还没到 21:25，这一格不去取数"
           elif [ -n "$have" ] && [ "$have" = "$today" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"; echo "今天的号已经在档案里，收工"
-          elif [ "$since" -lt "$GAP" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"; echo "距上一条不足 $GAP 分钟，这发不重敲"
+            echo "skip=true" >> "$GITHUB_OUTPUT"; echo "今天的号已经在档案里、钱也齐了，收工"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
